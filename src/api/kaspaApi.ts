@@ -1,37 +1,50 @@
-import { KAS_API } from "../constants";
+import { KAS_API, KAS_API_FALLBACKS } from "../constants";
 import { fmt } from "../helpers";
 
 const API_ROOT = String(KAS_API || "").replace(/\/+$/, "");
+const API_ROOTS = Array.from(new Set([API_ROOT, ...KAS_API_FALLBACKS.map((v) => String(v || "").replace(/\/+$/, ""))]))
+  .filter(Boolean);
 const REQUEST_TIMEOUT_MS = 12000;
 
-function makeUrl(path: string) {
-  return `${API_ROOT}${path}`;
+function makeUrl(root: string, path: string) {
+  return `${root}${path}`;
 }
 
 async function fetchJson(path: string) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(makeUrl(path), {
-      method: "GET",
-      headers: { "Accept": "application/json" },
-      signal: controller.signal,
-    });
-
-    if(!res.ok) {
-      throw new Error(`${path} ${res.status}`);
-    }
-
-    return await res.json();
-  } catch(err: any) {
-    if(err?.name === "AbortError") {
-      throw new Error(`Kaspa API timeout (${REQUEST_TIMEOUT_MS}ms): ${path}`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeoutId);
+  if (API_ROOTS.length === 0) {
+    throw new Error("No Kaspa API endpoints configured");
   }
+
+  const errors: string[] = [];
+
+  for (const root of API_ROOTS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(makeUrl(root, path), {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+        signal: controller.signal,
+      });
+
+      if(!res.ok) {
+        throw new Error(`${res.status}`);
+      }
+
+      return await res.json();
+    } catch(err: any) {
+      if(err?.name === "AbortError") {
+        errors.push(`${root} timeout (${REQUEST_TIMEOUT_MS}ms)`);
+      } else {
+        errors.push(`${root} ${err?.message || "request_failed"}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  throw new Error(`Kaspa API unavailable for ${path}: ${errors.join(" | ")}`);
 }
 
 function encodeAddress(addr: string) {

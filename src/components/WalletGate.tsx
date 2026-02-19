@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DEFAULT_NETWORK, NETWORK_LABEL } from "../constants";
+import { ALLOWED_ADDRESS_PREFIXES, DEFAULT_NETWORK, NETWORK_LABEL } from "../constants";
 import { C, mono } from "../tokens";
 import { isKaspaAddress } from "../helpers";
 import { WalletAdapter } from "../wallet/WalletAdapter";
@@ -21,7 +21,8 @@ export function WalletGate({onConnect}: any) {
         session = WalletAdapter.connectKaspium(kaspiumAddress);
       } else {
         // Demo mode — no extension
-        session = { address:"kaspa:qp3t6flvhqd4d9jkk8m5v0xelwm6zxx99qx5p8f3j8vcm9y5la2vsnjsklav", network:DEFAULT_NETWORK, provider:"demo" };
+        const demoPrefix = ALLOWED_ADDRESS_PREFIXES[0] || "kaspatest";
+        session = { address:`${demoPrefix}:qp3t6flvhqd4d9jkk8m5v0xelwm6zxx99qx5p8f3j8vcm9y5la2vsnjsklav`, network:DEFAULT_NETWORK, provider:"demo" };
       }
       onConnect(session);
     } catch(e: any) { setErr(e.message); }
@@ -62,8 +63,8 @@ export function WalletGate({onConnect}: any) {
         </div>
 
         <div style={{marginTop:12}}>
-          <Inp label="Kaspium Address" value={kaspiumAddress} onChange={setKaspiumAddress} placeholder="kaspa:... or kaspatest:..." hint="Required for Kaspium mobile connect flow" />
-          <Btn onClick={()=>connect("kaspium")} disabled={busy || !isKaspaAddress(kaspiumAddress)} variant="ghost" style={{width:"100%", padding:"10px 0"}}>
+          <Inp label="Kaspium Address" value={kaspiumAddress} onChange={setKaspiumAddress} placeholder={`${ALLOWED_ADDRESS_PREFIXES[0]}:...`} hint={`Allowed prefixes: ${ALLOWED_ADDRESS_PREFIXES.join(", ")}`} />
+          <Btn onClick={()=>connect("kaspium")} disabled={busy || !isKaspaAddress(kaspiumAddress, ALLOWED_ADDRESS_PREFIXES)} variant="ghost" style={{width:"100%", padding:"10px 0"}}>
             CONNECT KASPIUM
           </Btn>
         </div>

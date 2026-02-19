@@ -38,11 +38,24 @@ jobs:
           # Dynamic base path for project pages, e.g. /Forge.OS/
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
           VITE_KAS_API: ${{ vars.VITE_KAS_API || 'https://api-tn10.kaspa.org' }}
+          VITE_KAS_API_FALLBACKS: ${{ vars.VITE_KAS_API_FALLBACKS || 'https://api.kaspa.org' }}
           VITE_KAS_EXPLORER: ${{ vars.VITE_KAS_EXPLORER || 'https://explorer-tn10.kaspa.org' }}
           VITE_KAS_NETWORK: ${{ vars.VITE_KAS_NETWORK || 'kaspa_testnet_10' }}
           VITE_KAS_NETWORK_LABEL: ${{ vars.VITE_KAS_NETWORK_LABEL || 'Kaspa Testnet 10' }}
           VITE_KAS_WS_URL: ${{ vars.VITE_KAS_WS_URL || '' }}
+          VITE_KAS_ENFORCE_WALLET_NETWORK: ${{ vars.VITE_KAS_ENFORCE_WALLET_NETWORK || 'true' }}
         run: npm run build
+
+      - name: Write CNAME (optional)
+        env:
+          GH_PAGES_CNAME: ${{ vars.GH_PAGES_CNAME }}
+        run: |
+          if [ -n "${GH_PAGES_CNAME}" ]; then
+            echo "${GH_PAGES_CNAME}" > dist/CNAME
+            echo "Configured custom domain: ${GH_PAGES_CNAME}"
+          else
+            echo "No GH_PAGES_CNAME configured; skipping CNAME"
+          fi
 
       - name: Add .nojekyll
         run: touch dist/.nojekyll

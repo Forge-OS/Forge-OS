@@ -48,11 +48,13 @@ Create a `.env` file from `.env.example` and set values for your target environm
 
 Core Kaspa settings:
 - `VITE_KAS_API`
+- `VITE_KAS_API_FALLBACKS` (comma-separated backup endpoints)
 - `VITE_KAS_EXPLORER`
 - `VITE_KAS_NETWORK`
 - `VITE_KAS_NETWORK_LABEL`
 - `VITE_KAS_WS_URL`
 - `VITE_KASPIUM_DEEP_LINK_SCHEME`
+- `VITE_KAS_ENFORCE_WALLET_NETWORK`
 
 AI settings:
 - `VITE_AI_API_URL`
@@ -62,13 +64,26 @@ AI settings:
 ## Production Readiness Checklist
 1. Set repo-level Actions variables for all `VITE_KAS_*` values.
 2. Configure `VITE_KAS_WS_URL` for real-time websocket feeds.
-3. Use backend proxy for AI (`VITE_AI_API_URL`) to avoid exposing secrets.
-4. Run `npm run ci` and ensure all workflows are green.
-5. Validate wallet flows:
+3. Configure `VITE_KAS_ENFORCE_WALLET_NETWORK=true` for strict wallet-network matching.
+4. Use backend proxy for AI (`VITE_AI_API_URL`) to avoid exposing secrets.
+5. Run `npm run ci` and ensure all workflows are green.
+6. Validate wallet flows:
 - Kasware connect/sign/send
 - Kaspium deep-link + txid confirmation
-6. Confirm GitHub Pages deploy succeeds and loads at:
+7. Confirm GitHub Pages deploy succeeds and loads at:
 - `https://gryszzz.github.io/Forge.OS/`
+
+## Overnight Go-Live + Domain
+1. Push to `main` to trigger deploy.
+2. In GitHub repo settings, set Actions variable:
+- `GH_PAGES_CNAME=yourdomain.com`
+3. In DNS provider, add:
+- `CNAME` record for `www` -> `gryszzz.github.io`
+- Optional apex root: `A` records to GitHub Pages IPs (if using root domain)
+4. Re-run `Deploy ForgeOS to GitHub Pages` workflow.
+5. Verify:
+- `https://gryszzz.github.io/Forge.OS/`
+- `https://yourdomain.com` (after DNS propagation)
 
 ## Core Docs
 - Developer architecture: `README.dev.md`

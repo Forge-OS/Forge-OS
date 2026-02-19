@@ -67,10 +67,13 @@ Defined in `.env.example`.
 
 Kaspa network:
 - `VITE_KAS_API`
+- `VITE_KAS_API_FALLBACKS` (comma-separated backup endpoints)
 - `VITE_KAS_EXPLORER`
 - `VITE_KAS_NETWORK`
 - `VITE_KAS_NETWORK_LABEL`
 - `VITE_KAS_WS_URL`
+- `VITE_KASPIUM_DEEP_LINK_SCHEME`
+- `VITE_KAS_ENFORCE_WALLET_NETWORK`
 
 AI engine:
 - `VITE_AI_API_URL` (default: Anthropic Messages API)
@@ -102,13 +105,14 @@ AI engine:
 - Kasware connect path:
 - `requestAccounts()`
 - `getNetwork()`
+- strict network/profile match when `VITE_KAS_ENFORCE_WALLET_NETWORK=true`
 - Kasware send path:
 - `sendKaspa(toAddress, sompi)`
 - Kaspium connect path:
-- user enters `kaspa:` address
+- user enters address matching configured network prefixes
 - adapter stores session with provider `kaspium`
 - Kaspium send path:
-- deep-link URL generated from `KASPIUM_DEEP_LINK_SCHEME`
+- deep-link generated from `KASPIUM_DEEP_LINK_SCHEME` with `kaspa:` URI fallback
 - app prompts user to paste broadcast `txid`
 - Demo mode:
 - simulates transaction signatures/txids locally

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_NETWORK, EXPLORER, KAS_API, NET_FEE, NETWORK_LABEL, RESERVE } from "../../constants";
+import { ALLOWED_ADDRESS_PREFIXES, DEFAULT_NETWORK, EXPLORER, KAS_API, NET_FEE, NETWORK_LABEL, RESERVE } from "../../constants";
 import { fmt, isKaspaAddress } from "../../helpers";
 import { kasBalance, kasUtxos } from "../../api/kaspaApi";
 import { C, mono } from "../../tokens";
@@ -38,7 +38,7 @@ export function WalletPanel({agent, wallet}: any) {
   const maxSend = Math.max(0, bal-RESERVE-NET_FEE).toFixed(4);
 
   const initiateWithdraw = () => {
-    if(!isKaspaAddress(withdrawTo) || parseFloat(withdrawAmt)<=0) return;
+    if(!isKaspaAddress(withdrawTo, ALLOWED_ADDRESS_PREFIXES) || parseFloat(withdrawAmt)<=0) return;
     setSigningTx({type:"WITHDRAW", from:wallet?.address, to:withdrawTo, amount_kas:parseFloat(withdrawAmt), purpose:note || "Withdrawal"});
   };
   const handleSigned = () => {setSigningTx(null); setWithdrawTo(""); setWithdrawAmt(""); setNote("");};
@@ -83,7 +83,7 @@ export function WalletPanel({agent, wallet}: any) {
           <Btn onClick={()=>setWithdrawAmt(maxSend)} variant="ghost" size="sm" style={{marginBottom:1}}>MAX</Btn>
         </div>
         <Inp label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. Profit extraction"/>
-        <Btn onClick={initiateWithdraw} disabled={!isKaspaAddress(withdrawTo) || parseFloat(withdrawAmt)<=0} style={{width:"100%", padding:"10px 0"}}>
+        <Btn onClick={initiateWithdraw} disabled={!isKaspaAddress(withdrawTo, ALLOWED_ADDRESS_PREFIXES) || parseFloat(withdrawAmt)<=0} style={{width:"100%", padding:"10px 0"}}>
           INITIATE WITHDRAWAL — SIGN WITH {wallet?.provider?.toUpperCase()||"WALLET"}
         </Btn>
       </Card>

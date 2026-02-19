@@ -5,15 +5,29 @@ export const shortAddr = (a: any) => a ? `${a.slice(0,18)}...${a.slice(-6)}` : "
 export const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 export const uid = () => Math.random().toString(36).slice(2,10);
 
-export const isKaspaAddress = (address: any) => {
+const KASPA_BASE32_REGEX = /^[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+$/i;
+const DEFAULT_ALLOWED_PREFIXES = ["kaspa", "kaspatest", "kaspadev", "kaspasim"];
+
+export const isKaspaAddress = (address: any, allowedPrefixes: string[] = DEFAULT_ALLOWED_PREFIXES) => {
   const v = String(address || "").trim().toLowerCase();
-  return v.startsWith("kaspa:") || v.startsWith("kaspatest:");
+  const separatorIndex = v.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex === v.length - 1) return false;
+
+  const prefix = v.slice(0, separatorIndex);
+  const payload = v.slice(separatorIndex + 1);
+  if (!allowedPrefixes.map((p) => p.toLowerCase()).includes(prefix)) return false;
+  if (payload.length < 12 || payload.length > 120) return false;
+  return KASPA_BASE32_REGEX.test(payload);
 };
 
-export const normalizeKaspaAddress = (address: any) => {
+export const normalizeKaspaAddress = (address: any, allowedPrefixes: string[] = DEFAULT_ALLOWED_PREFIXES) => {
   const v = String(address || "").trim();
-  if(!isKaspaAddress(v)) {
-    throw new Error("Invalid Kaspa address. Must start with 'kaspa:' or 'kaspatest:'");
+  if(!isKaspaAddress(v, allowedPrefixes)) {
+    throw new Error(`Invalid Kaspa address for allowed prefixes: ${allowedPrefixes.join(", ")}`);
   }
-  return v;
+  const lower = v.toLowerCase();
+  const separatorIndex = lower.indexOf(":");
+  const prefix = lower.slice(0, separatorIndex);
+  const payload = lower.slice(separatorIndex + 1);
+  return `${prefix}:${payload}`;
 };
