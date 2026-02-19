@@ -10,7 +10,6 @@ export default function ForgeOS() {
   const [wallet, setWallet] = useState(null as any);
   const [view, setView] = useState("create");
   const [agent, setAgent] = useState(null as any);
-  const [signingDeploy, setSigningDeploy] = useState(null as any);
 
   const handleConnect = (session: any) => { setWallet(session); };
   const handleDeploy = (a: any) => { setAgent(a); setView("dashboard"); };

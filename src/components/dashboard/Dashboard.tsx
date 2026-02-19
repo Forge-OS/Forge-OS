@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AGENT_SPLIT, CONF_THRESHOLD, FEE_RATE, KAS_WS_URL, TREASURY, TREASURY_SPLIT } from "../../constants";
 import { kasBalance, kasNetworkInfo } from "../../api/kaspaApi";
 import { fmtT, shortAddr, uid } from "../../helpers";
@@ -30,7 +30,6 @@ export function Dashboard({agent, wallet}: any) {
   const [kasDataError, setKasDataError] = useState(null as any);
   const [liveConnected, setLiveConnected] = useState(false);
   const [streamConnected, setStreamConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const addLog = useCallback((e: any)=>setLog((p: any)=>[{ts:Date.now(), ...e}, ...p]), []);
 
@@ -47,14 +46,16 @@ export function Dashboard({agent, wallet}: any) {
       setKasDataError((e as any)?.message || "Kaspa live feed disconnected");
     }
     setKasDataLoading(false);
-  },[wallet,agent]);
+  },[wallet]);
 
   useEffect(()=>{
     refreshKasData();
 
+    const id = setInterval(refreshKasData, LIVE_POLL_MS);
+
+    let ws: WebSocket | null = null;
     if(KAS_WS_URL){
-      const ws = new WebSocket(KAS_WS_URL);
-      wsRef.current = ws;
+      ws = new WebSocket(KAS_WS_URL);
 
       ws.onopen = ()=>{
         setStreamConnected(true);
@@ -71,14 +72,14 @@ export function Dashboard({agent, wallet}: any) {
       ws.onclose = ()=>{
         setStreamConnected(false);
       };
-
-      return ()=>{
-        ws.close();
-      };
     }
 
-    const id = setInterval(refreshKasData, LIVE_POLL_MS);
-    return ()=>clearInterval(id);
+    return ()=>{
+      clearInterval(id);
+      if(ws){
+        ws.close();
+      }
+    };
   },[refreshKasData]);
 
   const riskThresh = agent.risk==="low"?0.4:agent.risk==="medium"?0.65:0.85;
