@@ -21,6 +21,11 @@ It includes:
 - Vite
 - Recharts
 
+## Researcher Bootstrap
+- Repo-level agent rules: `AGENTS.md`
+- Kaspa resource index: `docs/kaspa/links.md`
+- Master AI prompts: `docs/ai/kaspa-elite-engineer-mode.md`
+
 ## Project Layout
 - `forgeos-ui.tsx`: stable app export entry (re-exports `src/ForgeOS.tsx`)
 - `src/ForgeOS.tsx`: root shell/topbar + view routing
