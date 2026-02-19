@@ -11,21 +11,32 @@
       const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
       const repoBase = "/Forge.OS";
 
+      async function fetchManifest() {
+        const candidates = [
+          `${repoBase}/manifest.json`,
+          `${repoBase}/dist/manifest.json`,
+        ];
+
+        for(const url of candidates) {
+          const res = await fetch(url, { cache: "no-store" });
+          if(res.ok) return await res.json();
+        }
+
+        throw new Error("Manifest fetch failed in both Actions and branch deployment paths");
+      }
+
       async function boot() {
         if(isLocal) {
           await import("/src/main.tsx");
           return;
         }
 
-        // Branch-mode GitHub Pages fallback: resolve the current built entry from Vite manifest.
-        const manifestRes = await fetch(`${repoBase}/dist/manifest.json`, { cache: "no-store" });
-        if(!manifestRes.ok) throw new Error(`Manifest fetch failed: ${manifestRes.status}`);
-
-        const manifest = await manifestRes.json();
+        const manifest = await fetchManifest();
         const entry = manifest?.["index.html"]?.file || Object.values(manifest || {}).find((v) => v && v.isEntry)?.file;
         if(!entry) throw new Error("Could not resolve app entry from manifest");
 
-        await import(`${repoBase}/dist/${entry}`);
+        const entryPath = entry.startsWith("assets/") ? `${repoBase}/${entry}` : `${repoBase}/dist/${entry}`;
+        await import(entryPath);
       }
 
       boot().catch((err) => {
