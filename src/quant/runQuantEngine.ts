@@ -3,6 +3,7 @@ const env = import.meta.env;
 const AI_API_URL = env.VITE_AI_API_URL || "https://api.anthropic.com/v1/messages";
 const AI_MODEL = env.VITE_AI_MODEL || "claude-sonnet-4-20250514";
 const ANTHROPIC_API_KEY = env.VITE_ANTHROPIC_API_KEY || "";
+const AI_TIMEOUT_MS = 30000;
 
 function buildHeaders() {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -17,6 +18,14 @@ function buildHeaders() {
   }
 
   return headers;
+}
+
+function safeJsonParse(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("AI response was not valid JSON");
+  }
 }
 
 export async function runQuantEngine(agent: any, kasData: any) {
@@ -62,19 +71,36 @@ OUTPUT (strict JSON, all fields required):
 }`;
 
   const body = AI_API_URL.includes("api.anthropic.com")
-    ? {model:AI_MODEL,max_tokens:800,messages:[{role:"user",content:prompt}]}
-    : {prompt, agent, kasData};
+    ? { model: AI_MODEL, max_tokens: 800, messages: [{ role: "user", content: prompt }] }
+    : { prompt, agent, kasData };
 
-  const res = await fetch(AI_API_URL, {method:"POST", headers:buildHeaders(), body:JSON.stringify(body)});
-  if(!res.ok) throw new Error(`AI endpoint ${res.status}`);
-  const data = await res.json();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+
+  let data: any;
+  try {
+    const res = await fetch(AI_API_URL, {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if(!res.ok) throw new Error(`AI endpoint ${res.status}`);
+    data = await res.json();
+  } catch(err: any) {
+    if(err?.name === "AbortError") throw new Error(`AI request timeout (${AI_TIMEOUT_MS}ms)`);
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if(data?.error?.message) throw new Error(data.error.message);
 
   // Anthropic shape
   if(Array.isArray(data?.content)) {
-    const text = data.content.map((b: any)=>b.text || "").join("");
-    return JSON.parse(text.replace(/```json|```/g, "").trim());
+    const text = data.content.map((b: any) => b.text || "").join("");
+    return safeJsonParse(text.replace(/```json|```/g, "").trim());
   }
 
   // Backend-proxy shape: { decision: {...} } or direct JSON decision object.
