@@ -60,6 +60,11 @@ npm run build
 npm run preview
 ```
 
+## Domain Validation
+```bash
+npm run domain:check
+```
+
 Production assets are generated in `dist/`.
 
 ## Environment Variables
@@ -180,8 +185,9 @@ Workflow: `.github/workflows/deploy-pages.yml`
 
 Behavior:
 - Builds on `main` pushes.
-- Uses dynamic base path:
-- `VITE_BASE_PATH=/${{ github.event.repository.name }}/`
+- Base path auto-mode:
+- if `public/CNAME` exists, use root base path (`/`)
+- otherwise use project base path (`/${{ github.event.repository.name }}/`)
 - Adds `.nojekyll` to `dist/`.
 - Publishes artifact with `actions/deploy-pages`.
 
@@ -201,6 +207,7 @@ Expected URL for current user/repo:
 ```bash
 npm run build
 npm run preview
+npm run domain:check
 ```
 
 ## Release / Packaging
@@ -228,6 +235,8 @@ Then create GitHub release and attach:
 - confirm `VITE_AI_API_URL` + auth/proxy configuration
 - Build warning about chunk size:
 - non-blocking for now; optimize later with code-splitting
+- GitHub Pages `InvalidDNSError`:
+- use `docs/ops/custom-domain.md` and verify delegation/records with `npm run domain:check`
 
 ## Security Notes
 - Private keys are not handled by this app directly.

@@ -35,6 +35,11 @@ npm run dev
 npm run ci
 ```
 
+### Domain Health Check
+```bash
+npm run domain:check
+```
+
 ### Build (Production)
 ```bash
 npm run build
@@ -111,8 +116,12 @@ AI settings:
 - `https://gryszzz.github.io/Forge.OS/`
 - `https://forge-os.xyz` (after DNS propagation)
 
+If GitHub shows `InvalidDNSError`, use the runbook:
+- `docs/ops/custom-domain.md`
+
 ## Core Docs
 - Developer architecture: `README.dev.md`
 - Kaspa raw links and resources: `docs/kaspa/links.md`
 - AI researcher prompts: `docs/ai/kaspa-elite-engineer-mode.md`
+- Custom domain operations: `docs/ops/custom-domain.md`
 - Agent operating rules for this repo: `AGENTS.md`
