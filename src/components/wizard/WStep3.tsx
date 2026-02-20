@@ -1,4 +1,4 @@
-import { DEFAULT_NETWORK, TREASURY } from "../../constants";
+import { ACCUMULATION_VAULT, DEFAULT_NETWORK } from "../../constants";
 import { shortAddr } from "../../helpers";
 import { C, mono } from "../../tokens";
 import { Btn, Card } from "../ui";
@@ -18,7 +18,7 @@ export const WStep3 = ({d, wallet, onDeploy}: any) => {
         ))}
       </Card>
       <div style={{background:C.wLow, border:`1px solid ${C.warn}30`, borderRadius:4, padding:"10px 14px", marginBottom:16, fontSize:12, color:C.dim}}>
-        Deployment triggers a wallet signature to provision the agent vault. Treasury address: <span style={{color:C.accent, ...mono}}>{shortAddr(TREASURY)}</span>
+        Deployment triggers a wallet signature to provision the agent vault. Vault address: <span style={{color:C.accent, ...mono}}>{shortAddr(ACCUMULATION_VAULT)}</span>
       </div>
       <Btn onClick={onDeploy} disabled={!canDeploy} style={{width:"100%", padding:"11px 0"}}>DEPLOY AGENT — SIGN WITH WALLET</Btn>
       {!canDeploy && <div style={{fontSize:11, color:C.warn, marginTop:6, textAlign:"center", ...mono}}>Name, capital, and target required.</div>}

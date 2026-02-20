@@ -155,7 +155,9 @@ export function Dashboard({agent, wallet}: any) {
         addLog({type:"VALID", msg:`Risk OK (${dec.risk_score}) · Conf OK (${dec.confidence_score}) · Kelly ${(dec.kelly_fraction*100).toFixed(1)}%`, fee:null});
         setDecisions((p: any)=>[{ts:Date.now(), dec, kasData}, ...p]);
 
-        if(dec.action!=="HOLD"){
+        if (execMode === "notify") {
+          addLog({type:"EXEC", msg:`NOTIFY mode active — ${dec.action} signal recorded, no transaction broadcast.`, fee:0.01});
+        } else if(dec.action!=="HOLD"){
           const requested = Number(dec.capital_allocation_kas || 0);
           const amountKas = dec.action === "ACCUMULATE" ? Math.min(requested, availableToSpend) : requested;
           if (requested > amountKas) {

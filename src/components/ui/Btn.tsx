@@ -15,6 +15,10 @@ export const Btn = ({children, onClick, variant = "primary", disabled, style = {
       onMouseEnter={(e)=>{if(!disabled){e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.filter="brightness(1.06)";}}
       }
       onMouseLeave={(e)=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.filter="brightness(1)";}}
+      onMouseDown={(e)=>{if(!disabled){e.currentTarget.style.transform="translateY(0) scale(0.995)";}}
+      }
+      onMouseUp={(e)=>{if(!disabled){e.currentTarget.style.transform="translateY(-1px) scale(1)";}}
+      }
       style={{
         background:s.bg,
         color:s.color,
@@ -28,7 +32,7 @@ export const Btn = ({children, onClick, variant = "primary", disabled, style = {
         letterSpacing:"0.08em",
         textTransform:"uppercase",
         boxShadow:s.shadow,
-        transition:"all 0.18s ease",
+        transition:"all 0.16s ease",
         ...mono,
         ...style,
       }}
