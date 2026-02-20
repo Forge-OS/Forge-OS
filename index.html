@@ -16,15 +16,64 @@
 
       function pickEntry(manifest) {
         if (!manifest || typeof manifest !== "object") return "";
-        const values = Object.values(manifest);
+        const entries = Object.entries(manifest);
+        const values = entries.map(([, value]) => value);
+        const byDynamicMain = entries.find(([, entry]) => entry?.name === "main" && entry?.isDynamicEntry);
+        const byDynamic = entries.find(([, entry]) => entry?.isDynamicEntry);
+        const byEntry = entries.find(([, entry]) => entry?.isEntry);
         return (
-          manifest["src/main.tsx"]?.file ||
-          values.find((entry) => entry?.name === "main" && entry?.isDynamicEntry)?.file ||
-          values.find((entry) => entry?.isDynamicEntry)?.file ||
-          values.find((entry) => entry?.isEntry)?.file ||
-          manifest["index.html"]?.file ||
-          ""
+          (manifest["src/main.tsx"] && { key: "src/main.tsx", file: manifest["src/main.tsx"].file }) ||
+          (byDynamicMain && { key: byDynamicMain[0], file: byDynamicMain[1]?.file }) ||
+          (byDynamic && { key: byDynamic[0], file: byDynamic[1]?.file }) ||
+          (byEntry && { key: byEntry[0], file: byEntry[1]?.file }) ||
+          (manifest["index.html"] && { key: "index.html", file: manifest["index.html"].file }) ||
+          null
         );
+      }
+
+      function resolveCssDeps(manifest, entryKey) {
+        if (!manifest || typeof manifest !== "object") return [];
+        const css = new Set();
+        const visited = new Set();
+
+        function walk(key) {
+          if (!key || visited.has(key)) return;
+          visited.add(key);
+          const node = manifest[key];
+          if (!node || typeof node !== "object") return;
+          if (Array.isArray(node.imports)) {
+            for (const child of node.imports) walk(child);
+          }
+          if (Array.isArray(node.css)) {
+            for (const file of node.css) css.add(file);
+          }
+        }
+
+        if (entryKey) {
+          walk(entryKey);
+        } else {
+          for (const node of Object.values(manifest)) {
+            if (node && Array.isArray(node.css)) {
+              for (const file of node.css) css.add(file);
+            }
+          }
+        }
+
+        return Array.from(css);
+      }
+
+      function ensureCssLoaded(base, files) {
+        const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+        for (const file of files || []) {
+          const normalizedFile = String(file || "").replace(/^\.\//, "");
+          if (!normalizedFile) continue;
+          const href = `${normalizedBase}${normalizedFile}`;
+          if (document.querySelector(`link[rel="stylesheet"][href="${href}"]`)) continue;
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          document.head.appendChild(link);
+        }
       }
 
       async function fetchManifest() {
@@ -46,8 +95,8 @@
             if (!response.ok) continue;
             const manifest = await response.json();
             const entry = pickEntry(manifest);
-            if (!entry) continue;
-            return { entry, base: candidate.base };
+            if (!entry?.file) continue;
+            return { manifest, entry, base: candidate.base };
           } catch {
             // Try next candidate.
           }
@@ -62,9 +111,10 @@
           return;
         }
 
-        const { entry, base } = await fetchManifest();
+        const { manifest, entry, base } = await fetchManifest();
         const normalizedBase = base.endsWith("/") ? base : `${base}/`;
-        const normalizedEntry = String(entry).replace(/^\.\//, "");
+        ensureCssLoaded(normalizedBase, resolveCssDeps(manifest, entry?.key));
+        const normalizedEntry = String(entry.file).replace(/^\.\//, "");
         await import(`${normalizedBase}${normalizedEntry}`);
       }
 

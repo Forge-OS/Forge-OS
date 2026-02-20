@@ -26,4 +26,23 @@ if(!existsSync(`dist/${entry}`)) {
   process.exit(1);
 }
 
+const cssAssets = new Set();
+for (const value of Object.values(manifest || {})) {
+  const files = value?.css;
+  if (!Array.isArray(files)) continue;
+  for (const file of files) cssAssets.add(file);
+}
+
+if (cssAssets.size === 0) {
+  console.error("[smoke] No CSS assets discovered in manifest. The app may ship unstyled.");
+  process.exit(1);
+}
+
+for (const cssFile of cssAssets) {
+  if(!existsSync(`dist/${cssFile}`)) {
+    console.error(`[smoke] CSS asset missing on disk: dist/${cssFile}`);
+    process.exit(1);
+  }
+}
+
 console.log(`[smoke] OK - entry: dist/${entry}`);

@@ -17,6 +17,9 @@ export function WalletPanel({agent, wallet}: any) {
   const [withdrawTo, setWithdrawTo] = useState("");
   const [withdrawAmt, setWithdrawAmt] = useState("");
   const [note, setNote] = useState("");
+  const [viewportWidth, setViewportWidth] = useState(
+    typeof window !== "undefined" ? window.innerWidth : 1200
+  );
 
   const refresh = useCallback(async()=>{
     setLoading(true); setErr(null);
@@ -33,10 +36,17 @@ export function WalletPanel({agent, wallet}: any) {
   },[wallet,agent]);
 
   useEffect(()=>{refresh();},[refresh]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const bal = parseFloat(liveKas ?? agent.capitalLimit ?? 0);
   const maxSendKas = Math.max(0, bal - RESERVE - NET_FEE);
   const maxSend = maxSendKas.toFixed(4);
+  const isMobile = viewportWidth < 760;
 
   const initiateWithdraw = () => {
     const requested = Number(withdrawAmt);
@@ -70,7 +80,7 @@ export function WalletPanel({agent, wallet}: any) {
           </div>
         </div>
         {err && <div style={{background:C.dLow, border:`1px solid ${C.danger}30`, borderRadius:4, padding:"8px 12px", marginBottom:12, fontSize:12, color:C.danger, ...mono}}>RPC: {err}</div>}
-        <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12}}>
+        <div style={{display:"grid", gridTemplateColumns:isMobile ? "1fr" : "repeat(3,1fr)", gap:12}}>
           {[["Balance", `${liveKas ?? agent.capitalLimit} KAS`, liveKas?C.accent:C.warn], ["UTXOs", liveKas?String(utxos.length):"—", C.text], ["Network", wallet?.network||DEFAULT_NETWORK, C.dim]].map(([l,v,c])=> (
             <div key={l as any}><Label>{l}</Label><div style={{fontSize:18, color:c as any, fontWeight:700, ...mono}}>{v}</div></div>
           ))}
@@ -86,7 +96,7 @@ export function WalletPanel({agent, wallet}: any) {
           <span style={{fontSize:14, color:C.accent, fontWeight:700, ...mono}}>{maxSend} KAS</span>
         </div>
         <Inp label="Recipient Address" value={withdrawTo} onChange={setWithdrawTo} placeholder="kaspa:... or kaspatest:..."/>
-        <div style={{display:"grid", gridTemplateColumns:"1fr auto", gap:8, alignItems:"flex-end", marginBottom:12}}>
+        <div style={{display:"grid", gridTemplateColumns:isMobile ? "1fr" : "1fr auto", gap:8, alignItems:"flex-end", marginBottom:12}}>
           <Inp label={`Amount (max ${maxSend} KAS)`} value={withdrawAmt} onChange={setWithdrawAmt} type="number" suffix="KAS" placeholder="0.0000"/>
           <Btn onClick={()=>setWithdrawAmt(maxSend)} variant="ghost" size="sm" style={{marginBottom:1}}>MAX</Btn>
         </div>
@@ -130,11 +140,11 @@ export function WalletPanel({agent, wallet}: any) {
             const daa = u.utxoEntry?.blockDaaScore;
             const txid = u.outpoint?.transactionId;
             return(
-              <div key={i} style={{display:"grid", gridTemplateColumns:"1fr 100px 120px 60px", gap:8, padding:"8px 16px", borderBottom:`1px solid ${C.border}`, alignItems:"center"}}>
+              <div key={i} style={{display:"grid", gridTemplateColumns:isMobile ? "1fr" : "1fr 100px 120px 60px", gap:8, padding:"8px 16px", borderBottom:`1px solid ${C.border}`, alignItems:"center"}}>
                 <span style={{fontSize:11, color:C.dim, ...mono, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{txid?.slice(0,34)}...</span>
-                <span style={{fontSize:12, color:C.ok, fontWeight:700, ...mono, textAlign:"right"}}>{kas} KAS</span>
-                <span style={{fontSize:11, color:C.dim, ...mono, textAlign:"right"}}>DAA {daa}</span>
-                <div style={{textAlign:"right"}}><ExtLink href={`${EXPLORER}/txs/${txid}`} label="↗"/></div>
+                <span style={{fontSize:12, color:C.ok, fontWeight:700, ...mono, textAlign:isMobile ? "left" : "right"}}>{kas} KAS</span>
+                <span style={{fontSize:11, color:C.dim, ...mono, textAlign:isMobile ? "left" : "right"}}>DAA {daa}</span>
+                <div style={{textAlign:isMobile ? "left" : "right"}}><ExtLink href={`${EXPLORER}/txs/${txid}`} label="↗"/></div>
               </div>
             );
           })}
