@@ -1,4 +1,5 @@
 import { resolveKaspaNetwork } from "./kaspa/network";
+import { normalizeKaspaAddress } from "./helpers";
 
 const env = import.meta.env;
 
@@ -39,10 +40,40 @@ export const ENFORCE_WALLET_NETWORK = String(env.VITE_KAS_ENFORCE_WALLET_NETWORK
 export const ACCUMULATE_ONLY = String(env.VITE_ACCUMULATE_ONLY || "true").toLowerCase() !== "false";
 
 const IS_TESTNET = DEFAULT_NETWORK.startsWith("testnet");
-const MAINNET_TREASURY = env.VITE_TREASURY_ADDRESS_MAINNET || "kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85";
-const TESTNET_TREASURY = env.VITE_TREASURY_ADDRESS_TESTNET || "kaspatest:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85";
-const MAINNET_ACCUMULATION = env.VITE_ACCUMULATION_ADDRESS_MAINNET || MAINNET_TREASURY;
-const TESTNET_ACCUMULATION = env.VITE_ACCUMULATION_ADDRESS_TESTNET || TESTNET_TREASURY;
+
+function requireKaspaAddress(value: string, allowedPrefixes: string[], label: string) {
+  try {
+    return normalizeKaspaAddress(value, allowedPrefixes);
+  } catch {
+    throw new Error(`Invalid ${label}. Expected prefixes: ${allowedPrefixes.join(", ")}`);
+  }
+}
+
+const MAINNET_TREASURY_RAW =
+  env.VITE_TREASURY_ADDRESS_MAINNET || "kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85";
+const TESTNET_TREASURY_RAW =
+  env.VITE_TREASURY_ADDRESS_TESTNET || "kaspatest:qpqz2vxj23kvh0m73ta2jjn2u4cv4tlufqns2eap8mxyyt0rvrxy6ejkful67";
+const MAINNET_TREASURY = requireKaspaAddress(MAINNET_TREASURY_RAW, ["kaspa"], "VITE_TREASURY_ADDRESS_MAINNET");
+const TESTNET_TREASURY = requireKaspaAddress(TESTNET_TREASURY_RAW, ["kaspatest"], "VITE_TREASURY_ADDRESS_TESTNET");
+
+const MAINNET_ACCUMULATION_RAW = env.VITE_ACCUMULATION_ADDRESS_MAINNET || MAINNET_TREASURY;
+const TESTNET_ACCUMULATION_RAW = env.VITE_ACCUMULATION_ADDRESS_TESTNET || TESTNET_TREASURY;
+const MAINNET_ACCUMULATION = requireKaspaAddress(
+  MAINNET_ACCUMULATION_RAW,
+  ["kaspa"],
+  "VITE_ACCUMULATION_ADDRESS_MAINNET"
+);
+const TESTNET_ACCUMULATION = requireKaspaAddress(
+  TESTNET_ACCUMULATION_RAW,
+  ["kaspatest"],
+  "VITE_ACCUMULATION_ADDRESS_TESTNET"
+);
+
+const DEMO_MAINNET_RAW = env.VITE_DEMO_ADDRESS_MAINNET || MAINNET_TREASURY;
+const DEMO_TESTNET_RAW = env.VITE_DEMO_ADDRESS_TESTNET || TESTNET_TREASURY;
+export const DEMO_ADDRESS_MAINNET = requireKaspaAddress(DEMO_MAINNET_RAW, ["kaspa"], "VITE_DEMO_ADDRESS_MAINNET");
+export const DEMO_ADDRESS_TESTNET = requireKaspaAddress(DEMO_TESTNET_RAW, ["kaspatest"], "VITE_DEMO_ADDRESS_TESTNET");
+export const DEMO_ADDRESS = IS_TESTNET ? DEMO_ADDRESS_TESTNET : DEMO_ADDRESS_MAINNET;
 
 export const TREASURY = IS_TESTNET ? TESTNET_TREASURY : MAINNET_TREASURY;
 export const ACCUMULATION_VAULT = IS_TESTNET ? TESTNET_ACCUMULATION : MAINNET_ACCUMULATION;

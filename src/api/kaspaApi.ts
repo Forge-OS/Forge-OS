@@ -6,8 +6,40 @@ const API_ROOTS = Array.from(new Set([API_ROOT, ...KAS_API_FALLBACKS.map((v) => 
   .filter(Boolean);
 const REQUEST_TIMEOUT_MS = 12000;
 
+type NetworkHint = "mainnet" | "testnet" | "unknown";
+
 function makeUrl(root: string, path: string) {
   return `${root}${path}`;
+}
+
+function endpointNetworkHint(root: string): NetworkHint {
+  const value = String(root || "").toLowerCase();
+  if(value.includes("tn10") || value.includes("tn11") || value.includes("tn12") || value.includes("testnet")) {
+    return "testnet";
+  }
+  if(value.includes("api.kaspa.org") || value.includes("mainnet")) {
+    return "mainnet";
+  }
+  return "unknown";
+}
+
+function pathNetworkHint(path: string): NetworkHint {
+  const value = String(path || "").toLowerCase();
+  if(value.includes("/addresses/kaspatest:")) return "testnet";
+  if(value.includes("/addresses/kaspa:")) return "mainnet";
+  return "unknown";
+}
+
+function resolveApiRoots(path: string) {
+  const pathHint = pathNetworkHint(path);
+  if(pathHint === "unknown") return API_ROOTS;
+
+  const preferred = API_ROOTS.filter((root) => {
+    const endpointHint = endpointNetworkHint(root);
+    return endpointHint === pathHint || endpointHint === "unknown";
+  });
+
+  return preferred.length > 0 ? preferred : API_ROOTS;
 }
 
 async function fetchJson(path: string) {
@@ -15,9 +47,10 @@ async function fetchJson(path: string) {
     throw new Error("No Kaspa API endpoints configured");
   }
 
+  const requestRoots = resolveApiRoots(path);
   const errors: string[] = [];
 
-  for (const root of API_ROOTS) {
+  for (const root of requestRoots) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 

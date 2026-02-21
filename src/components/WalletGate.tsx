@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ALLOWED_ADDRESS_PREFIXES, DEFAULT_NETWORK, NETWORK_LABEL } from "../constants";
+import { ALLOWED_ADDRESS_PREFIXES, DEFAULT_NETWORK, DEMO_ADDRESS, NETWORK_LABEL } from "../constants";
 import { C, mono } from "../tokens";
 import { isKaspaAddress, normalizeKaspaAddress, shortAddr } from "../helpers";
 import { WalletAdapter } from "../wallet/WalletAdapter";
@@ -104,8 +104,7 @@ export function WalletGate({onConnect}: any) {
         setInfo(`Kaspium session ready for ${shortAddr(session.address)}.`);
       } else {
         // Demo mode — no extension
-        const demoPrefix = ALLOWED_ADDRESS_PREFIXES[0] || "kaspatest";
-        session = { address:`${demoPrefix}:qp3t6flvhqd4d9jkk8m5v0xelwm6zxx99qx5p8f3j8vcm9y5la2vsnjsklav`, network:DEFAULT_NETWORK, provider:"demo" };
+        session = { address: DEMO_ADDRESS, network:DEFAULT_NETWORK, provider:"demo" };
         setInfo("Demo session ready.");
       }
       persistProvider(provider);

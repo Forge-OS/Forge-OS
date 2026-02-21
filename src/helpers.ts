@@ -16,7 +16,8 @@ export const isKaspaAddress = (address: any, allowedPrefixes: string[] = DEFAULT
   const prefix = v.slice(0, separatorIndex);
   const payload = v.slice(separatorIndex + 1);
   if (!allowedPrefixes.map((p) => p.toLowerCase()).includes(prefix)) return false;
-  if (payload.length < 12 || payload.length > 120) return false;
+  // Kaspa REST gateways commonly enforce 61-63 payload chars for address path params.
+  if (payload.length < 61 || payload.length > 63) return false;
   return KASPA_BASE32_REGEX.test(payload);
 };
 
