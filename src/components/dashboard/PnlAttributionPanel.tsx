@@ -8,14 +8,17 @@ export function PnlAttributionPanel({ summary }: any) {
   const quality = Number(summary?.signalQualityScore || 0);
   const timing = Number(summary?.timingAlphaPct || 0);
 
+  const modeLabel = netMode === "realized" ? "Realized" : netMode === "hybrid" ? "Hybrid" : "Estimated";
   return (
     <div>
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 13, color: C.text, fontWeight: 700, ...mono }}>
-          PnL Attribution ({netMode === "hybrid" ? "Hybrid" : "Estimated"})
+          PnL Attribution ({modeLabel})
         </div>
         <div style={{ fontSize: 11, color: C.dim }}>
-          {netMode === "hybrid"
+          {netMode === "realized"
+            ? "Executed signals are fully receipt-confirmed with chain confirmation timestamps for realized drift attribution."
+            : netMode === "hybrid"
             ? "Confirmed receipts use realized broadcast→confirmation execution drift; remaining execution costs stay estimated."
             : "Attribution is estimated from quant expected value, queue execution outcomes, fee logs, liquidity buckets, and market snapshots."}
         </div>
@@ -23,10 +26,12 @@ export function PnlAttributionPanel({ summary }: any) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, marginBottom: 12 }}>
         {[
-          [netMode === "hybrid" ? "Net PnL (hybrid)" : "Net PnL (est)", `${net >= 0 ? "+" : ""}${net.toFixed(4)} KAS`, net >= 0 ? C.ok : C.danger],
+          [netMode === "realized" ? "Net PnL (realized)" : netMode === "hybrid" ? "Net PnL (hybrid)" : "Net PnL (est)", `${net >= 0 ? "+" : ""}${net.toFixed(4)} KAS`, net >= 0 ? C.ok : C.danger],
           ["Fill Rate", `${Number(summary?.fillRatePct || 0).toFixed(1)}%`, Number(summary?.fillRatePct || 0) >= 70 ? C.ok : C.warn],
           ["Confirmed Receipts", `${Number(summary?.confirmedSignals || 0)}`, Number(summary?.confirmedSignals || 0) > 0 ? C.ok : C.dim],
           ["Receipt Coverage", `${Number(summary?.receiptCoveragePct || 0).toFixed(1)}%`, Number(summary?.receiptCoveragePct || 0) >= 50 ? C.ok : C.warn],
+          ["Realized Receipt Coverage", `${Number(summary?.realizedReceiptCoveragePct || 0).toFixed(1)}%`, Number(summary?.realizedReceiptCoveragePct || 0) >= 50 ? C.ok : C.warn],
+          ["Chain Fee Coverage", `${Number(summary?.chainFeeCoveragePct || 0).toFixed(1)}%`, Number(summary?.chainFeeCoveragePct || 0) >= 50 ? C.ok : C.warn],
           ["Signal Quality", `${quality.toFixed(3)}`, quality >= 0.65 ? C.ok : C.warn],
           ["Timing Alpha", `${timing >= 0 ? "+" : ""}${timing.toFixed(3)}%`, timing >= 0 ? C.ok : C.warn],
           ["Avg Confidence", `${Number(summary?.avgSignalConfidence || 0).toFixed(3)}`, C.text],

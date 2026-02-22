@@ -56,6 +56,8 @@ describe('kaspaApi', () => {
               status: 'confirmed',
               confirmations: 3,
               blockTime: 1234567890,
+              feeSompi: 12345,
+              mass: 777,
             },
           }),
         } as any;
@@ -68,6 +70,10 @@ describe('kaspaApi', () => {
     expect(receipt.found).toBe(true);
     expect(receipt.status).toBe('confirmed');
     expect(receipt.confirmations).toBe(3);
+    expect(receipt.confirmTimeMs).toBe(1234567890_000);
+    expect(receipt.feeSompi).toBe(12345);
+    expect(receipt.feeKas).toBeCloseTo(0.00012345, 8);
+    expect(receipt.mass).toBe(777);
     expect(receipt.sourcePath).toContain('/txs/');
     expect(calls.some((url) => url.includes('/transactions/'))).toBe(true);
     expect(calls.some((url) => url.includes('/txs/'))).toBe(true);

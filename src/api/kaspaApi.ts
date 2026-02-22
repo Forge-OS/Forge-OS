@@ -192,6 +192,10 @@ export type KasTxReceipt = {
   accepted?: boolean;
   blockDaaScore?: number;
   blockTime?: number;
+  confirmTimeMs?: number;
+  feeSompi?: number;
+  feeKas?: number;
+  mass?: number;
   sourcePath?: string;
   raw?: any;
 };
@@ -207,6 +211,22 @@ function pickFirstNumber(...values: any[]) {
 function pickFirstBoolean(...values: any[]) {
   for (const v of values) {
     if (typeof v === "boolean") return v;
+  }
+  return undefined;
+}
+
+function normalizeTimestampMs(value: any) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  // Treat values < 1e12 as seconds; Kaspa APIs may return unix seconds.
+  if (n < 1_000_000_000_000) return Math.round(n * 1000);
+  return Math.round(n);
+}
+
+function pickFirstFiniteInt(...values: any[]) {
+  for (const v of values) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) return Math.round(n);
   }
   return undefined;
 }
@@ -246,6 +266,30 @@ function parseKasTxReceipt(txid: string, payload: any, sourcePath?: string): Kas
     root?.verboseData?.blockTime,
     root?.verboseData?.blockTimestamp
   );
+  const feeSompi = pickFirstFiniteInt(
+    root?.feeSompi,
+    root?.fee_sompi,
+    root?.networkFeeSompi,
+    root?.verboseData?.feeSompi,
+    root?.verboseData?.networkFeeSompi,
+  );
+  const feeKasExplicit = pickFirstNumber(
+    root?.feeKas,
+    root?.fee_kas,
+    root?.networkFeeKas,
+    root?.verboseData?.feeKas,
+    root?.verboseData?.networkFeeKas,
+  );
+  const feeKas = Number.isFinite(feeKasExplicit)
+    ? Number(feeKasExplicit)
+    : (typeof feeSompi === "number" ? Number((feeSompi / 1e8).toFixed(8)) : undefined);
+  const mass = pickFirstFiniteInt(
+    root?.mass,
+    root?.transactionMass,
+    root?.verboseData?.mass,
+    root?.verboseData?.transactionMass,
+  );
+  const confirmTimeMs = normalizeTimestampMs(blockTime);
 
   let status: KasTxReceipt["status"] = "pending";
   if (
@@ -272,6 +316,10 @@ function parseKasTxReceipt(txid: string, payload: any, sourcePath?: string): Kas
     accepted,
     blockDaaScore: Number.isFinite(blockDaaScore) ? Number(blockDaaScore) : undefined,
     blockTime: Number.isFinite(blockTime) ? Number(blockTime) : undefined,
+    confirmTimeMs,
+    feeSompi,
+    feeKas,
+    mass,
     sourcePath,
     raw: payload,
   };

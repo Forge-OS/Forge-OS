@@ -24,7 +24,8 @@
     "test:e2e:headed": "playwright test --headed",
     "ai:proxy": "node server/ai-proxy/index.mjs",
     "scheduler:start": "node server/scheduler/index.mjs",
-    "tx-builder:start": "node server/tx-builder/index.mjs"
+    "tx-builder:start": "node server/tx-builder/index.mjs",
+    "callback-consumer:start": "node server/callback-consumer/index.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

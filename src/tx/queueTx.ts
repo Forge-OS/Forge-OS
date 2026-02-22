@@ -24,6 +24,8 @@ export type QueueTxItem = {
   submitted_ts?: number;
   broadcast_ts?: number;
   confirm_ts?: number;
+  confirm_detected_ts?: number;
+  confirm_ts_source?: "chain" | "poll";
   receipt_last_checked_ts?: number;
   receipt_next_check_at?: number;
   receipt_attempts?: number;
@@ -31,6 +33,11 @@ export type QueueTxItem = {
   failure_reason?: string | null;
   broadcast_price_usd?: number;
   confirm_price_usd?: number;
+  receipt_block_time_ms?: number;
+  receipt_fee_sompi?: number;
+  receipt_fee_kas?: number;
+  receipt_mass?: number;
+  receipt_source_path?: string;
   metaKind?: "treasury_fee" | "action" | "deploy";
   [key: string]: any;
 };
@@ -103,6 +110,10 @@ export function validateQueueTxItem(input: any): QueueTxItem {
     submitted_ts: Math.max(0, Math.round(finite(input?.submitted_ts, input?.ts ?? Date.now()))),
     broadcast_ts: finite(input?.broadcast_ts, NaN) > 0 ? Math.round(finite(input?.broadcast_ts, 0)) : undefined,
     confirm_ts: finite(input?.confirm_ts, NaN) > 0 ? Math.round(finite(input?.confirm_ts, 0)) : undefined,
+    confirm_detected_ts:
+      finite(input?.confirm_detected_ts, NaN) > 0 ? Math.round(finite(input?.confirm_detected_ts, 0)) : undefined,
+    confirm_ts_source:
+      input?.confirm_ts_source === "chain" || input?.confirm_ts_source === "poll" ? input.confirm_ts_source : undefined,
     receipt_last_checked_ts:
       finite(input?.receipt_last_checked_ts, NaN) > 0 ? Math.round(finite(input?.receipt_last_checked_ts, 0)) : undefined,
     receipt_next_check_at:
@@ -115,6 +126,16 @@ export function validateQueueTxItem(input: any): QueueTxItem {
       Number.isFinite(finite(input?.broadcast_price_usd, NaN)) ? finite(input?.broadcast_price_usd, 0) : undefined,
     confirm_price_usd:
       Number.isFinite(finite(input?.confirm_price_usd, NaN)) ? finite(input?.confirm_price_usd, 0) : undefined,
+    receipt_block_time_ms:
+      finite(input?.receipt_block_time_ms, NaN) > 0 ? Math.round(finite(input?.receipt_block_time_ms, 0)) : undefined,
+    receipt_fee_sompi:
+      Number.isFinite(finite(input?.receipt_fee_sompi, NaN)) ? Math.max(0, Math.round(finite(input?.receipt_fee_sompi, 0))) : undefined,
+    receipt_fee_kas:
+      Number.isFinite(finite(input?.receipt_fee_kas, NaN)) ? Math.max(0, Number(finite(input?.receipt_fee_kas, 0).toFixed(8))) : undefined,
+    receipt_mass:
+      Number.isFinite(finite(input?.receipt_mass, NaN)) ? Math.max(0, Math.round(finite(input?.receipt_mass, 0))) : undefined,
+    receipt_source_path:
+      input?.receipt_source_path ? String(input.receipt_source_path).slice(0, 240) : undefined,
     metaKind: input?.metaKind === "treasury_fee" ? "treasury_fee" : input?.metaKind === "deploy" ? "deploy" : "action",
   };
 }

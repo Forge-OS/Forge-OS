@@ -188,12 +188,24 @@ export function useExecutionQueue(params: UseExecutionQueueParams) {
 
     const livePrice = Number(kasPriceUsd || 0);
     const confirmPrice = livePrice > 0 ? livePrice : (Number(await kasPrice().catch(() => 0)) || undefined);
+    const chainConfirmTs = Number(receipt?.confirmTimeMs || receipt?.blockTime || 0);
+    const normalizedConfirmTs =
+      chainConfirmTs > 0
+        ? (chainConfirmTs < 1_000_000_000_000 ? Math.round(chainConfirmTs * 1000) : Math.round(chainConfirmTs))
+        : checkedTs;
     updateQueueItemReceiptLifecycle(itemId, { type: "CONFIRMED" }, {
       receipt_last_checked_ts: checkedTs,
       receipt_next_check_at: undefined,
       receipt_attempts: attempts + 1,
       confirmations: Math.max(0, Number(receipt?.confirmations || 0)),
-      confirm_ts: checkedTs,
+      confirm_ts: normalizedConfirmTs,
+      confirm_detected_ts: checkedTs,
+      confirm_ts_source: chainConfirmTs > 0 ? "chain" : "poll",
+      receipt_block_time_ms: chainConfirmTs > 0 ? normalizedConfirmTs : undefined,
+      receipt_fee_sompi: Number.isFinite(Number(receipt?.feeSompi)) ? Math.max(0, Math.round(Number(receipt?.feeSompi))) : undefined,
+      receipt_fee_kas: Number.isFinite(Number(receipt?.feeKas)) ? Math.max(0, Number(Number(receipt?.feeKas).toFixed(8))) : undefined,
+      receipt_mass: Number.isFinite(Number(receipt?.mass)) ? Math.max(0, Math.round(Number(receipt?.mass))) : undefined,
+      receipt_source_path: receipt?.sourcePath ? String(receipt.sourcePath).slice(0, 240) : undefined,
       failure_reason: null,
       ...(confirmPrice ? { confirm_price_usd: confirmPrice } : {}),
     });

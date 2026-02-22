@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { derivePnlAttribution } from '../../src/analytics/pnlAttribution';
 
 describe('pnlAttribution', () => {
-  it('uses hybrid slippage/net when confirmed receipt telemetry exists', () => {
+  it('uses realized mode when all executed signals have chain-timestamp receipt telemetry', () => {
     const summary = derivePnlAttribution({
       decisions: [
         {
@@ -27,8 +27,12 @@ describe('pnlAttribution', () => {
           amount_kas: 10,
           receipt_lifecycle: 'confirmed',
           confirmations: 2,
+          receipt_fee_kas: 0.0001,
           broadcast_price_usd: 0.10,
           confirm_price_usd: 0.101,
+          broadcast_ts: 1_000,
+          confirm_ts: 3_000,
+          confirm_ts_source: 'chain',
           dec: { liquidity_impact: 'MODERATE', action: 'ACCUMULATE' },
         },
       ],
@@ -40,10 +44,13 @@ describe('pnlAttribution', () => {
       ],
     });
 
-    expect(summary.netPnlMode).toBe('hybrid');
+    expect(summary.netPnlMode).toBe('realized');
     expect(summary.confirmedSignals).toBe(1);
     expect(summary.executedSignals).toBe(1);
     expect(summary.receiptCoveragePct).toBe(100);
+    expect(summary.realizedReceiptCoveragePct).toBe(100);
+    expect(summary.chainFeeCoveragePct).toBe(100);
+    expect(summary.realizedChainFeeKas).toBeCloseTo(0.0001, 8);
     expect(summary.realizedExecutionDriftKas).toBeGreaterThan(0);
     expect(summary.netPnlKas).not.toBe(summary.estimatedNetPnlKas);
   });

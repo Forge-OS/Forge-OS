@@ -56,6 +56,14 @@ export TX_BUILDER_COMMAND='node /path/to/your/kaspa-tx-builder.js'
 node server/tx-builder/index.mjs
 ```
 
+With bundled HTTP bridge command (real `TX_BUILDER_COMMAND` executable):
+```bash
+export TX_BUILDER_COMMAND='node server/tx-builder/commands/kastle-http-bridge-command.mjs'
+export KASTLE_TX_BUILDER_COMMAND_UPSTREAM_URL=http://127.0.0.1:9001/v1/build
+export KASTLE_TX_BUILDER_COMMAND_UPSTREAM_TOKEN=upstream-secret
+node server/tx-builder/index.mjs
+```
+
 With upstream proxy:
 ```bash
 export TX_BUILDER_UPSTREAM_URL=http://127.0.0.1:9001/v1/build
@@ -82,6 +90,8 @@ Optional:
 - `TX_BUILDER_UPSTREAM_URL`, `TX_BUILDER_UPSTREAM_TOKEN`
 - `TX_BUILDER_COMMAND`
 - `TX_BUILDER_COMMAND_TIMEOUT_MS`
+- `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_URL`, `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_TOKEN`
+- `KASTLE_TX_BUILDER_COMMAND_TIMEOUT_MS` (for bundled command adapter)
 - `TX_BUILDER_REQUEST_TIMEOUT_MS`
 - `TX_BUILDER_ALLOW_MANUAL_TXJSON` (debug/manual mode only)
 
@@ -94,4 +104,3 @@ The command must write JSON to stdout:
 ```
 
 Non-zero exit code is treated as a build failure.
-

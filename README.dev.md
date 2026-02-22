@@ -127,6 +127,8 @@ Kaspa network:
 - `SCHEDULER_LEADER_LOCK_RENEW_JITTER_MS`, `SCHEDULER_LEADER_ACQUIRE_BACKOFF_MIN_MS`, `SCHEDULER_LEADER_ACQUIRE_BACKOFF_MAX_MS` (leader fencing lock behavior)
 - `VITE_KASTLE_TX_BUILDER_URL` / `VITE_KASTLE_TX_BUILDER_TOKEN` / `VITE_KASTLE_TX_BUILDER_TIMEOUT_MS` (automatic Kastle txJson builder endpoint)
 - `VITE_KASTLE_TX_BUILDER_STRICT` (fail instead of fallback on builder error)
+- `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_URL` / `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_TOKEN` (bundled `TX_BUILDER_COMMAND` HTTP bridge helper)
+- `CALLBACK_CONSUMER_*` (reference downstream callback consumer + receipt ingestion starter)
 
 AI engine:
 - `VITE_AI_API_URL` (default: Anthropic Messages API)
@@ -242,6 +244,7 @@ Recommendation for production:
 - Starter queue/rate-limit proxy example: `server/ai-proxy/index.mjs`
 - Scheduler shared-cache + auth/JWT/JWKS/quotas/Redis-authoritative (due + execution queue) starter example: `server/scheduler/index.mjs`
 - Kastle tx-builder starter example: `server/tx-builder/index.mjs`
+- Callback consumer reference service (fence/idempotency + execution receipt ingestion): `server/callback-consumer/index.mjs`
 - Keep decision sanitization enabled (default) and enforce wallet-side signing.
 - For maximum AI involvement use `VITE_AI_OVERLAY_MODE=always`; for scale/cost control use `adaptive`.
 - For strict real-AI-only operation, also set `VITE_AI_FALLBACK_ENABLED=false` (engine will error if AI transport is unavailable).

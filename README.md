@@ -282,11 +282,13 @@ FORGE.OS polls Kaspa transaction endpoints with backoff and persists receipt tel
 - `submitted_ts`
 - `broadcast_ts`
 - `confirm_ts`
+- `confirm_ts_source` (`chain` when receipt block timestamp is available)
 - `confirmations`
 - `failure_reason`
+- `receipt_fee_kas` / `receipt_fee_sompi` (when exposed by API payload)
 - price snapshot telemetry at broadcast/confirm when available
 
-This feeds receipt-aware attribution and improves operator trust in execution state.
+This feeds receipt-aware attribution (`estimated` / `hybrid` / `realized`) and improves operator trust in execution state.
 
 ## Real AI + Quant Intelligence
 
@@ -355,6 +357,7 @@ npm run tx-builder:start
 Provides:
 - backend tx-builder endpoint for automatic `Kastle` `signAndBroadcastTx(..., txJson)` flows
 - command-hook mode (`TX_BUILDER_COMMAND`) for local Kaspa tx-builder integration
+- bundled command executable `server/tx-builder/commands/kastle-http-bridge-command.mjs` for real `TX_BUILDER_COMMAND` deployments that proxy a dedicated builder
 - upstream proxy mode (`TX_BUILDER_UPSTREAM_URL`)
 - `GET /health`
 - `GET /metrics`
@@ -362,6 +365,22 @@ Provides:
 Frontend integration:
 - `VITE_KASTLE_TX_BUILDER_URL`
 - `VITE_KASTLE_TX_BUILDER_TOKEN` (optional)
+
+### Callback Consumer (Reference) (`server/callback-consumer`)
+Run:
+```bash
+npm run callback-consumer:start
+```
+
+Provides:
+- downstream scheduler callback receiver with idempotency enforcement
+- leader fence-token enforcement (`X-ForgeOS-Leader-Fence-Token`)
+- exact execution receipt ingestion endpoints for backend attribution pipelines
+- `GET /health`
+- `GET /metrics`
+- `GET /v1/events`
+- `POST /v1/scheduler/cycle`
+- `GET/POST /v1/execution-receipts`
 
 <details>
 <summary><strong>Hidden Ops Notes (GitHub-friendly collapsible)</strong></summary>
@@ -445,6 +464,7 @@ npm run domain:watch
 - `src/api/kaspaApi.ts` — Kaspa REST integration + receipt lookups
 - `server/ai-proxy/*` — AI proxy starter + metrics
 - `server/scheduler/*` — scheduler/shared cache starter + metrics
+- `server/callback-consumer/*` — reference downstream callback receiver + receipt ingestion starter
 - `tests/*` — unit, perf, and E2E suites
 
 ## Security Guardrails

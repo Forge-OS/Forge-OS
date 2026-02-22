@@ -42,6 +42,13 @@ function subsequentPriceMovePct(history: any[], ts: number, lookaheadSteps = 3) 
   return ((next - current) / current) * 100;
 }
 
+function nearestSnapshotPrice(history: any[], ts: number) {
+  const idx = nearestSnapshotIndex(history, ts);
+  if (idx < 0) return null;
+  const price = n(history[idx]?.priceUsd, 0);
+  return price > 0 ? price : null;
+}
+
 function slippageBpsForLiquidity(liq: string) {
   const v = String(liq || "MODERATE").toUpperCase();
   if (v === "MINIMAL") return 6;
@@ -52,8 +59,9 @@ function slippageBpsForLiquidity(liq: string) {
 export type PnlAttributionSummary = {
   grossEdgeKas: number;
   netPnlKas: number;
-  netPnlMode: "estimated" | "hybrid";
+  netPnlMode: "estimated" | "hybrid" | "realized";
   feesKas: number;
+  realizedChainFeeKas: number;
   slippageKas: number;
   estimatedSlippageKas: number;
   estimatedNetPnlKas: number;
@@ -65,6 +73,8 @@ export type PnlAttributionSummary = {
   rejectedSignals: number;
   fillRatePct: number;
   receiptCoveragePct: number;
+  realizedReceiptCoveragePct: number;
+  chainFeeCoveragePct: number;
   missedFillKas: number;
   avgSignalConfidence: number;
   avgExpectedValuePct: number;
@@ -100,7 +110,7 @@ export function derivePnlAttribution(params: {
   const pending = actionQueue.filter((q) => q?.status === "pending");
   const rejected = actionQueue.filter((q) => q?.status === "rejected");
 
-  const feesKas = log.reduce((sum, entry) => sum + Math.max(0, n(entry?.fee, 0)), 0);
+  const feesKasLogged = log.reduce((sum, entry) => sum + Math.max(0, n(entry?.fee, 0)), 0);
 
   let grossEdgeKas = 0;
   let slippageKasEstimated = 0;
@@ -151,8 +161,11 @@ export function derivePnlAttribution(params: {
 
   let confirmedSignals = 0;
   let receiptTrackedSignals = 0;
+  let realizedReceiptSignals = 0;
   let confirmedEstimatedSlippageKas = 0;
   let realizedExecutionDriftKas = 0;
+  let realizedChainFeeKas = 0;
+  let chainFeeSignals = 0;
   for (const item of signed) {
     const receiptState = String(item?.receipt_lifecycle || "");
     const hasTrackedReceipt =
@@ -168,8 +181,24 @@ export function derivePnlAttribution(params: {
     const liq = String(item?.dec?.liquidity_impact || "MODERATE");
     confirmedEstimatedSlippageKas += amountKas * (slippageBpsForLiquidity(liq) / 10_000);
 
-    const p0 = n(item?.broadcast_price_usd, 0);
-    const p1 = n(item?.confirm_price_usd, 0);
+    const feeKas = n(item?.receipt_fee_kas, NaN);
+    if (Number.isFinite(feeKas) && feeKas >= 0) {
+      realizedChainFeeKas += feeKas;
+      chainFeeSignals += 1;
+    }
+
+    const broadcastTs = n(item?.broadcast_ts, 0);
+    const confirmTs = n(item?.confirm_ts, 0);
+    const hasChainConfirmTs = String(item?.confirm_ts_source || "") === "chain" && confirmTs > 0;
+    const p0 = n(item?.broadcast_price_usd, 0) > 0
+      ? n(item?.broadcast_price_usd, 0)
+      : (nearestSnapshotPrice(marketHistory, broadcastTs) ?? 0);
+    const p1 = hasChainConfirmTs
+      ? (nearestSnapshotPrice(marketHistory, confirmTs) ?? n(item?.confirm_price_usd, 0))
+      : n(item?.confirm_price_usd, 0);
+    if (hasChainConfirmTs && p0 > 0 && p1 > 0) {
+      realizedReceiptSignals += 1;
+    }
     if (p0 > 0 && p1 > 0 && amountKas > 0) {
       const side = String(item?.type || item?.dec?.action || "").toUpperCase();
       const direction = side === "REDUCE" ? -1 : 1;
@@ -194,8 +223,14 @@ export function derivePnlAttribution(params: {
   const avgExpectedValuePct = decisions.length > 0 ? expectedValueSum / decisions.length : 0;
   const timingAlphaPct = timingSamples > 0 ? timingAlphaAcc / timingSamples : 0;
   const signalQualityScore = qualitySamples > 0 ? qualityScoreAcc / qualitySamples : 0;
-  const estimatedNetPnlKas = grossEdgeKas - feesKas - slippageKasEstimated;
-  const netPnlMode: "estimated" | "hybrid" = confirmedSignals > 0 ? "hybrid" : "estimated";
+  const estimatedNetPnlKas = grossEdgeKas - feesKasLogged - slippageKasEstimated;
+  const allExecutedConfirmed = executedSignals > 0 && confirmedSignals === executedSignals;
+  const realizedReceiptCoveragePct = executedSignals > 0 ? (realizedReceiptSignals / executedSignals) * 100 : 0;
+  const chainFeeCoveragePct = confirmedSignals > 0 ? (chainFeeSignals / confirmedSignals) * 100 : 0;
+  const canCallRealized = allExecutedConfirmed && confirmedSignals > 0 && realizedReceiptSignals === confirmedSignals;
+  const netPnlMode: "estimated" | "hybrid" | "realized" =
+    confirmedSignals === 0 ? "estimated" : canCallRealized ? "realized" : "hybrid";
+  const feesKas = feesKasLogged;
   const netPnlKas = grossEdgeKas - feesKas - hybridSlippageKas;
 
   return {
@@ -203,6 +238,7 @@ export function derivePnlAttribution(params: {
     netPnlKas: Number(netPnlKas.toFixed(6)),
     netPnlMode,
     feesKas: Number(feesKas.toFixed(6)),
+    realizedChainFeeKas: Number(realizedChainFeeKas.toFixed(6)),
     slippageKas: Number(hybridSlippageKas.toFixed(6)),
     estimatedSlippageKas: Number(slippageKasEstimated.toFixed(6)),
     estimatedNetPnlKas: Number(estimatedNetPnlKas.toFixed(6)),
@@ -214,6 +250,8 @@ export function derivePnlAttribution(params: {
     rejectedSignals,
     fillRatePct: Number(fillRatePct.toFixed(2)),
     receiptCoveragePct: Number(receiptCoveragePct.toFixed(2)),
+    realizedReceiptCoveragePct: Number(realizedReceiptCoveragePct.toFixed(2)),
+    chainFeeCoveragePct: Number(chainFeeCoveragePct.toFixed(2)),
     missedFillKas: Number(missedFillKas.toFixed(6)),
     avgSignalConfidence: Number(avgSignalConfidence.toFixed(4)),
     avgExpectedValuePct: Number(avgExpectedValuePct.toFixed(4)),
@@ -225,6 +263,11 @@ export function derivePnlAttribution(params: {
       { label: "Gross Edge", value: Number(grossEdgeKas.toFixed(6)), hint: "Expected-value weighted edge from actionable signals" },
       { label: "Fees", value: Number((-feesKas).toFixed(6)), hint: "Protocol + execution fees from runtime logs" },
       {
+        label: "Chain Fee (receipts)",
+        value: Number((-realizedChainFeeKas).toFixed(6)),
+        hint: "On-chain network fee parsed from confirmed receipt payloads (coverage may be partial)",
+      },
+      {
         label: confirmedSignals > 0 ? "Slippage (hybrid)" : "Slippage (est)",
         value: Number((-hybridSlippageKas).toFixed(6)),
         hint:
@@ -235,13 +278,18 @@ export function derivePnlAttribution(params: {
       {
         label: confirmedSignals > 0 ? "Realized Drift (receipts)" : "Realized Drift (receipts)",
         value: Number((-realizedExecutionDriftKas).toFixed(6)),
-        hint: "Observed price drift between broadcast and confirmation timestamps for confirmed executions",
+        hint:
+          netPnlMode === "realized"
+            ? "Observed price drift using chain confirmation timestamps (receipt block time) and market snapshots"
+            : "Observed price drift between broadcast and confirmation timestamps for confirmed executions",
       },
       {
-        label: confirmedSignals > 0 ? "Net PnL (hybrid)" : "Net PnL (est)",
+        label: netPnlMode === "realized" ? "Net PnL (realized)" : confirmedSignals > 0 ? "Net PnL (hybrid)" : "Net PnL (est)",
         value: Number((confirmedSignals > 0 ? netPnlKas : estimatedNetPnlKas).toFixed(6)),
         hint:
-          confirmedSignals > 0
+          netPnlMode === "realized"
+            ? "All executed signals confirmed with chain receipt timestamps and receipt-aware execution drift"
+            : confirmedSignals > 0
             ? "Gross edge - fees - hybrid slippage (realized where receipts are confirmed)"
             : "Gross edge - fees - estimated slippage",
       },
