@@ -131,6 +131,7 @@ node server/scheduler/index.mjs
 - `SCHEDULER_OIDC_ISSUER`, `SCHEDULER_OIDC_DISCOVERY_TTL_MS` (optional OIDC discovery)
 - `SCHEDULER_JWKS_URL` (optional OIDC/JWKS endpoint for JWT verification)
 - `SCHEDULER_JWKS_CACHE_TTL_MS` (JWKS cache TTL, default `300000`)
+- `SCHEDULER_AUTH_HTTP_TIMEOUT_MS` (auth/OIDC/JWKS fetch timeout, default `5000`)
 - `SCHEDULER_JWKS_ALLOWED_KIDS`, `SCHEDULER_JWKS_REQUIRE_PINNED_KID` (optional key pinning policy)
 - `SCHEDULER_AUTH_READS` (default `false`; protect `GET /v1/*`)
 - `SCHEDULER_QUOTA_WINDOW_MS`, `SCHEDULER_QUOTA_READ_MAX`, `SCHEDULER_QUOTA_WRITE_MAX`, `SCHEDULER_QUOTA_TICK_MAX`

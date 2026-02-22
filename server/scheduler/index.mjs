@@ -51,6 +51,7 @@ const JWKS_URL = String(process.env.SCHEDULER_JWKS_URL || process.env.SCHEDULER_
 const JWKS_CACHE_TTL_MS = Math.max(1000, Number(process.env.SCHEDULER_JWKS_CACHE_TTL_MS || 300000));
 const OIDC_ISSUER = String(process.env.SCHEDULER_OIDC_ISSUER || JWT_ISSUER || "").trim();
 const OIDC_DISCOVERY_TTL_MS = Math.max(1000, Number(process.env.SCHEDULER_OIDC_DISCOVERY_TTL_MS || 300000));
+const AUTH_HTTP_TIMEOUT_MS = Math.max(500, Number(process.env.SCHEDULER_AUTH_HTTP_TIMEOUT_MS || 5000));
 const JWKS_ALLOWED_KIDS = String(process.env.SCHEDULER_JWKS_ALLOWED_KIDS || "")
   .split(",")
   .map((s) => s.trim())
@@ -62,6 +63,10 @@ const QUOTA_READ_MAX = Math.max(1, Number(process.env.SCHEDULER_QUOTA_READ_MAX |
 const QUOTA_WRITE_MAX = Math.max(1, Number(process.env.SCHEDULER_QUOTA_WRITE_MAX || 240));
 const QUOTA_TICK_MAX = Math.max(1, Number(process.env.SCHEDULER_QUOTA_TICK_MAX || 60));
 const CALLBACK_IDEMPOTENCY_TTL_MS = Math.max(1000, Number(process.env.SCHEDULER_CALLBACK_IDEMPOTENCY_TTL_MS || 24 * 60 * 60 * 1000));
+const CALLBACK_IDEMPOTENCY_LEASE_MS = Math.max(
+  CALLBACK_TIMEOUT_MS + 5000,
+  Math.min(CALLBACK_IDEMPOTENCY_TTL_MS, CALLBACK_TIMEOUT_MS * 3)
+);
 const REDIS_RESET_EXEC_QUEUE_ON_BOOT = /^(1|true|yes)$/i.test(String(process.env.SCHEDULER_REDIS_RESET_EXEC_QUEUE_ON_BOOT || "false"));
 
 const agents = new Map();
@@ -149,10 +154,12 @@ const callbackIdempotencyMemory = new Map();
 const jwksCache = {
   ts: 0,
   byKid: new Map(),
+  inFlight: null,
 };
 const oidcDiscoveryCache = {
   ts: 0,
   value: null,
+  inFlight: null,
 };
 
 const REDIS_KEYS = {
@@ -263,6 +270,27 @@ function base64UrlDecode(input) {
   return Buffer.from(normalized + pad, "base64");
 }
 
+async function fetchJsonWithTimeout(url, timeoutMs, label) {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), Math.max(250, Number(timeoutMs || 0))) : null;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`${label}_${res.status}:${text.slice(0, 180)}`);
+    return text ? JSON.parse(text) : {};
+  } catch (e) {
+    if (/AbortError/i.test(String(e?.name || "")) || /aborted/i.test(String(e?.message || ""))) {
+      throw new Error(`${label}_timeout_${Math.max(250, Number(timeoutMs || 0))}ms`);
+    }
+    throw e;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 async function loadOidcDiscovery(forceRefresh = false) {
   if (!OIDC_ISSUER) return null;
   const now = nowMs();
@@ -270,29 +298,32 @@ async function loadOidcDiscovery(forceRefresh = false) {
     metrics.oidcDiscoveryCacheHitsTotal += 1;
     return oidcDiscoveryCache.value;
   }
+  if (!forceRefresh && oidcDiscoveryCache.inFlight) return oidcDiscoveryCache.inFlight;
   metrics.oidcDiscoveryFetchTotal += 1;
-  const issuerBase = OIDC_ISSUER.replace(/\/+$/, "");
-  const discoveryUrl = `${issuerBase}/.well-known/openid-configuration`;
-  const res = await fetch(discoveryUrl, { headers: { Accept: "application/json" } });
-  const text = await res.text();
-  if (!res.ok) {
-    metrics.oidcDiscoveryFetchErrorsTotal += 1;
-    throw new Error(`oidc_discovery_${res.status}:${text.slice(0, 180)}`);
-  }
-  const parsed = text ? JSON.parse(text) : {};
-  if (String(parsed?.issuer || "").replace(/\/+$/, "") !== issuerBase) {
-    metrics.oidcDiscoveryFetchErrorsTotal += 1;
-    throw new Error("oidc_discovery_issuer_mismatch");
-  }
-  const jwksUri = String(parsed?.jwks_uri || "").trim();
-  if (!jwksUri) {
-    metrics.oidcDiscoveryFetchErrorsTotal += 1;
-    throw new Error("oidc_discovery_missing_jwks_uri");
-  }
-  const value = { issuer: issuerBase, jwksUri };
-  oidcDiscoveryCache.ts = nowMs();
-  oidcDiscoveryCache.value = value;
-  return value;
+  oidcDiscoveryCache.inFlight = (async () => {
+    try {
+      const issuerBase = OIDC_ISSUER.replace(/\/+$/, "");
+      const discoveryUrl = `${issuerBase}/.well-known/openid-configuration`;
+      const parsed = await fetchJsonWithTimeout(discoveryUrl, AUTH_HTTP_TIMEOUT_MS, "oidc_discovery");
+      if (String(parsed?.issuer || "").replace(/\/+$/, "") !== issuerBase) {
+        throw new Error("oidc_discovery_issuer_mismatch");
+      }
+      const jwksUri = String(parsed?.jwks_uri || "").trim();
+      if (!jwksUri) {
+        throw new Error("oidc_discovery_missing_jwks_uri");
+      }
+      const value = { issuer: issuerBase, jwksUri };
+      oidcDiscoveryCache.ts = nowMs();
+      oidcDiscoveryCache.value = value;
+      return value;
+    } catch (e) {
+      metrics.oidcDiscoveryFetchErrorsTotal += 1;
+      throw e;
+    } finally {
+      oidcDiscoveryCache.inFlight = null;
+    }
+  })();
+  return oidcDiscoveryCache.inFlight;
 }
 
 async function resolveJwksUrl(forceRefreshDiscovery = false) {
@@ -350,30 +381,33 @@ async function loadJwks(forceRefresh = false) {
     metrics.jwksCacheHitsTotal += 1;
     return jwksCache.byKid;
   }
+  if (!forceRefresh && jwksCache.inFlight) return jwksCache.inFlight;
   metrics.jwksFetchTotal += 1;
-  try {
-    const res = await fetch(jwksUrl, { headers: { Accept: "application/json" } });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`jwks_${res.status}:${text.slice(0, 180)}`);
-    const parsed = text ? JSON.parse(text) : {};
-    const keys = Array.isArray(parsed?.keys) ? parsed.keys : [];
-    const byKid = new Map();
-    for (const jwk of keys) {
-      const kid = String(jwk?.kid || "").trim();
-      if (!kid) continue;
-      if (JWKS_ALLOWED_KIDS.length && !JWKS_ALLOWED_KIDS.includes(kid)) continue;
-      byKid.set(kid, jwk);
+  jwksCache.inFlight = (async () => {
+    try {
+      const parsed = await fetchJsonWithTimeout(jwksUrl, AUTH_HTTP_TIMEOUT_MS, "jwks");
+      const keys = Array.isArray(parsed?.keys) ? parsed.keys : [];
+      const byKid = new Map();
+      for (const jwk of keys) {
+        const kid = String(jwk?.kid || "").trim();
+        if (!kid) continue;
+        if (JWKS_ALLOWED_KIDS.length && !JWKS_ALLOWED_KIDS.includes(kid)) continue;
+        byKid.set(kid, jwk);
+      }
+      if (JWKS_REQUIRE_PINNED_KID && JWKS_ALLOWED_KIDS.length && byKid.size === 0) {
+        throw new Error("jwks_no_pinned_keys_loaded");
+      }
+      jwksCache.ts = nowMs();
+      jwksCache.byKid = byKid;
+      return byKid;
+    } catch (e) {
+      metrics.jwksFetchErrorsTotal += 1;
+      throw e;
+    } finally {
+      jwksCache.inFlight = null;
     }
-    if (JWKS_REQUIRE_PINNED_KID && JWKS_ALLOWED_KIDS.length && byKid.size === 0) {
-      throw new Error("jwks_no_pinned_keys_loaded");
-    }
-    jwksCache.ts = nowMs();
-    jwksCache.byKid = byKid;
-    return byKid;
-  } catch (e) {
-    metrics.jwksFetchErrorsTotal += 1;
-    throw e;
-  }
+  })();
+  return jwksCache.inFlight;
 }
 
 async function verifyJwksJwt(token) {
@@ -1508,27 +1542,99 @@ async function postCallback(url, payload) {
   }
 }
 
-async function markCallbackIdempotencyOnce(idempotencyKey) {
+function callbackDedupeDoneKey(idempotencyKey) {
+  return `${REDIS_KEYS.callbackDedupePrefix}:${idempotencyKey}:done`;
+}
+
+function callbackDedupeLeaseKey(idempotencyKey) {
+  return `${REDIS_KEYS.callbackDedupePrefix}:${idempotencyKey}:lease`;
+}
+
+async function beginCallbackIdempotency(idempotencyKey) {
   const key = String(idempotencyKey || "").trim();
-  if (!key) return true;
+  if (!key) return { shouldSend: true, leaseToken: "", mode: "noop" };
+  const leaseToken = `${INSTANCE_ID}:${nowMs()}:${Math.random().toString(36).slice(2, 10)}`;
   if (redisClient) {
-    const ok = await redisOp("callback_dedupe_set_nx", (r) =>
-      r.set(`${REDIS_KEYS.callbackDedupePrefix}:${key}`, "1", { NX: true, PX: CALLBACK_IDEMPOTENCY_TTL_MS })
+    const doneExists = await redisOp("callback_dedupe_done_exists", (r) => r.exists(callbackDedupeDoneKey(key)));
+    if (doneExists == null) return { shouldSend: true, leaseToken, mode: "redis_fail_open" };
+    if (Number(doneExists) > 0) return { shouldSend: false, leaseToken: "", mode: "redis_done" };
+    const leaseOk = await redisOp("callback_dedupe_lease_set_nx", (r) =>
+      r.set(callbackDedupeLeaseKey(key), leaseToken, { NX: true, PX: CALLBACK_IDEMPOTENCY_LEASE_MS })
     );
-    if (ok == null) return true;
-    return ok === "OK";
+    if (leaseOk == null) return { shouldSend: true, leaseToken, mode: "redis_fail_open" };
+    if (leaseOk !== "OK") return { shouldSend: false, leaseToken: "", mode: "redis_inflight" };
+    const doneAfterLease = await redisOp("callback_dedupe_done_exists", (r) => r.exists(callbackDedupeDoneKey(key)));
+    if (doneAfterLease == null) return { shouldSend: true, leaseToken, mode: "redis_fail_open" };
+    if (Number(doneAfterLease) > 0) {
+      await redisOp("callback_dedupe_lease_release_done", (r) => r.del(callbackDedupeLeaseKey(key)));
+      return { shouldSend: false, leaseToken: "", mode: "redis_done_after_lease" };
+    }
+    return { shouldSend: true, leaseToken, mode: "redis_lease" };
   }
   const now = nowMs();
   const prev = callbackIdempotencyMemory.get(key);
-  if (prev && now < prev.expAt) return false;
-  callbackIdempotencyMemory.set(key, { expAt: now + CALLBACK_IDEMPOTENCY_TTL_MS });
+  if (prev) {
+    if (prev.state === "done" && now < Number(prev.expAt || 0)) return { shouldSend: false, leaseToken: "", mode: "memory_done" };
+    if (prev.state === "lease" && now < Number(prev.leaseExpAt || 0)) return { shouldSend: false, leaseToken: "", mode: "memory_inflight" };
+  }
+  callbackIdempotencyMemory.set(key, {
+    state: "lease",
+    leaseToken,
+    leaseExpAt: now + CALLBACK_IDEMPOTENCY_LEASE_MS,
+    expAt: now + CALLBACK_IDEMPOTENCY_TTL_MS,
+  });
   if (callbackIdempotencyMemory.size > 50_000) {
     for (const [k, v] of callbackIdempotencyMemory.entries()) {
-      if (!v || now >= Number(v.expAt || 0)) callbackIdempotencyMemory.delete(k);
+      if (!v || now >= Number(v.expAt || v.leaseExpAt || 0)) callbackIdempotencyMemory.delete(k);
       if (callbackIdempotencyMemory.size <= 50_000) break;
     }
   }
-  return true;
+  return { shouldSend: true, leaseToken, mode: "memory_lease" };
+}
+
+async function completeCallbackIdempotency(idempotencyKey, leaseToken) {
+  const key = String(idempotencyKey || "").trim();
+  if (!key) return;
+  const token = String(leaseToken || "").trim();
+  if (redisClient) {
+    if (!token) return;
+    const leaseKey = callbackDedupeLeaseKey(key);
+    const doneKey = callbackDedupeDoneKey(key);
+    const currentLease = await redisOp("callback_dedupe_lease_get", (r) => r.get(leaseKey));
+    if (currentLease == null) return;
+    if (String(currentLease) !== token) return;
+    await redisOp("callback_dedupe_mark_done", async (r) => {
+      const multi = r.multi();
+      multi.set(doneKey, "1", { PX: CALLBACK_IDEMPOTENCY_TTL_MS });
+      multi.del(leaseKey);
+      return multi.exec();
+    });
+    return;
+  }
+  const now = nowMs();
+  const prev = callbackIdempotencyMemory.get(key);
+  if (!prev || prev.state !== "lease") return;
+  if (String(prev.leaseToken || "") !== token) return;
+  callbackIdempotencyMemory.set(key, { state: "done", expAt: now + CALLBACK_IDEMPOTENCY_TTL_MS });
+}
+
+async function releaseCallbackIdempotencyLease(idempotencyKey, leaseToken) {
+  const key = String(idempotencyKey || "").trim();
+  if (!key) return;
+  const token = String(leaseToken || "").trim();
+  if (redisClient) {
+    if (!token) return;
+    const leaseKey = callbackDedupeLeaseKey(key);
+    const currentLease = await redisOp("callback_dedupe_lease_get", (r) => r.get(leaseKey));
+    if (currentLease == null) return;
+    if (String(currentLease) !== token) return;
+    await redisOp("callback_dedupe_lease_release", (r) => r.del(leaseKey));
+    return;
+  }
+  const prev = callbackIdempotencyMemory.get(key);
+  if (!prev || prev.state !== "lease") return;
+  if (String(prev.leaseToken || "") !== token) return;
+  callbackIdempotencyMemory.delete(key);
 }
 
 async function dispatchAgentCycle(agent, meta = {}) {
@@ -1571,9 +1677,15 @@ async function dispatchAgentCycle(agent, meta = {}) {
     };
     let callbackDeduped = false;
     if (agent.callbackUrl) {
-      const shouldSend = await markCallbackIdempotencyOnce(callbackIdempotencyKey);
-      if (shouldSend) {
-        await postCallback(agent.callbackUrl, payload);
+      const callbackLease = await beginCallbackIdempotency(callbackIdempotencyKey);
+      if (callbackLease.shouldSend) {
+        try {
+          await postCallback(agent.callbackUrl, payload);
+          await completeCallbackIdempotency(callbackIdempotencyKey, callbackLease.leaseToken);
+        } catch (e) {
+          await releaseCallbackIdempotencyLease(callbackIdempotencyKey, callbackLease.leaseToken);
+          throw e;
+        }
       } else {
         callbackDeduped = true;
         metrics.callbackDedupeSkippedTotal += 1;
