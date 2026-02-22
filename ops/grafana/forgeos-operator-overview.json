@@ -373,37 +373,37 @@
           "placement": "bottom"
         }
       },
-      "title": "Calibration Health / Automation Guardrails",
+      "title": "Fleet Calibration / Automation Guardrails",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "forgeos_callback_consumer_calibration_health",
-          "legendFormat": "calibration health",
+          "expr": "forgeos:fleet:callback_consumer:calibration_health_avg",
+          "legendFormat": "fleet calibration health (avg)",
           "refId": "A"
         },
         {
-          "expr": "forgeos_callback_consumer_calibration_brier_score",
-          "legendFormat": "brier score",
+          "expr": "forgeos:fleet:callback_consumer:calibration_brier_score_avg",
+          "legendFormat": "fleet Brier (avg)",
           "refId": "B"
         },
         {
-          "expr": "forgeos_callback_consumer_calibration_ev_calibration_error_pct",
-          "legendFormat": "EV cal error %",
+          "expr": "forgeos:fleet:callback_consumer:calibration_ev_calibration_error_pct_avg",
+          "legendFormat": "fleet EV cal error % (avg)",
           "refId": "C"
         },
         {
-          "expr": "forgeos_callback_consumer_calibration_regime_hit_rate_pct",
-          "legendFormat": "regime hit rate %",
+          "expr": "forgeos:fleet:callback_consumer:calibration_regime_hit_rate_pct_avg",
+          "legendFormat": "fleet regime hit rate % (avg)",
           "refId": "D"
         },
         {
-          "expr": "forgeos_callback_consumer_calibration_degraded_active",
-          "legendFormat": "degraded active",
+          "expr": "forgeos:fleet:callback_consumer:calibration_degraded_instances",
+          "legendFormat": "degraded instances",
           "refId": "E"
         },
         {
-          "expr": "forgeos_callback_consumer_calibration_auto_approve_disabled",
-          "legendFormat": "auto-approve disabled",
+          "expr": "forgeos:fleet:callback_consumer:calibration_auto_approve_disabled_instances",
+          "legendFormat": "auto-approve disabled instances",
           "refId": "F"
         }
       ]
@@ -427,10 +427,69 @@
       },
       "id": 10,
       "options": {
-        "content": "Use Forge.OS UI for per-agent calibration details (`Brier`, `EV calibration error`, `Regime hit-rate`, truth banners). This Grafana board is the backend truth/control/execution + calibration telemetry surface. Alerts are defined in `ops/prometheus/forgeos-alert-rules.yml` and should be tuned from production baselines.",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "title": "Fleet Truth / Calibration Freshness",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "forgeos:fleet:callback_consumer:receipt_consistency_mismatch_ratio5m",
+          "legendFormat": "fleet truth mismatch ratio (5m)",
+          "refId": "A"
+        },
+        {
+          "expr": "forgeos:fleet:callback_consumer:receipt_consistency_mismatch_by_type_ratio5m{type=\"confirm_ts\"}",
+          "legendFormat": "confirm_ts mismatch ratio",
+          "refId": "B"
+        },
+        {
+          "expr": "forgeos:fleet:callback_consumer:receipt_consistency_mismatch_by_type_ratio5m{type=\"fee\"}",
+          "legendFormat": "fee mismatch ratio",
+          "refId": "C"
+        },
+        {
+          "expr": "forgeos:fleet:callback_consumer:receipt_consistency_mismatch_by_type_ratio5m{type=\"slippage\"}",
+          "legendFormat": "slippage mismatch ratio",
+          "refId": "D"
+        },
+        {
+          "expr": "forgeos:fleet:callback_consumer:calibration_truth_degraded_instances",
+          "legendFormat": "truth degraded instances",
+          "refId": "E"
+        },
+        {
+          "expr": "forgeos:fleet:callback_consumer:calibration_last_report_age_seconds_max",
+          "legendFormat": "max calibration report age (s)",
+          "refId": "F"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "id": 11,
+      "options": {
+        "content": "Fleet panels aggregate callback-consumer truth + calibration signals via recording rules. Use the Forge.OS UI for per-agent calibration details and receipt provenance. Tune alert thresholds from production baselines (see `ops/prometheus/forgeos-alert-rules.yml`).",
         "mode": "markdown"
       },
-      "title": "Calibration / Ops Guidance",
+      "title": "Fleet Ops Guidance",
       "type": "text"
     }
   ],

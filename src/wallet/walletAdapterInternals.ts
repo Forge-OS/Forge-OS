@@ -8,9 +8,6 @@ import {
 import { fmt, normalizeKaspaAddress } from "../helpers";
 import { isAddressPrefixCompatible, resolveKaspaNetwork } from "../kaspa/network";
 import { walletError } from "../runtime/errorTaxonomy";
-import { createGhostBridgeRuntime, type GhostProviderInfo } from "./walletAdapterGhostBridge";
-import { createKastleRawTxRuntime } from "./walletAdapterKastleRawTx";
-export type { GhostProviderInfo } from "./walletAdapterGhostBridge";
 
 export const ALL_KASPA_ADDRESS_PREFIXES = ["kaspa", "kaspatest", "kaspadev", "kaspasim"];
 export const WALLET_CALL_TIMEOUT_MS = 15000;
@@ -164,42 +161,6 @@ export function getKastleProvider() {
   if (!provider) throw new Error("Kastle extension not detected. Install from kastle.cc");
   return provider;
 }
-
-const kastleRawTxRuntime = createKastleRawTxRuntime({
-  allKaspaAddressPrefixes: ALL_KASPA_ADDRESS_PREFIXES,
-  walletCallTimeoutMs: WALLET_CALL_TIMEOUT_MS,
-  kastleAccountCacheTtlMs: KASTLE_ACCOUNT_CACHE_TTL_MS,
-  kastleTxBuilderUrl: KASTLE_TX_BUILDER_URL,
-  kastleTxBuilderToken: KASTLE_TX_BUILDER_TOKEN,
-  kastleTxBuilderTimeoutMs: KASTLE_TX_BUILDER_TIMEOUT_MS,
-  kastleTxBuilderStrict: KASTLE_TX_BUILDER_STRICT,
-  kastleRawTxManualJsonPromptEnabled: KASTLE_RAW_TX_MANUAL_JSON_PROMPT_ENABLED,
-  getKastleProvider,
-  withTimeout,
-  normalizeKaspaAddress,
-  normalizeOutputList,
-  kastleNetworkIdForCurrentProfile,
-  getKastleRawTxJsonBuilderBridge,
-});
-
-export const getKastleAccountAddress = (...args: Parameters<typeof kastleRawTxRuntime.getKastleAccountAddress>) =>
-  kastleRawTxRuntime.getKastleAccountAddress(...args);
-export const setKastleAccountCacheAddress = (...args: Parameters<typeof kastleRawTxRuntime.setKastleAccountCacheAddress>) =>
-  kastleRawTxRuntime.setKastleAccountCacheAddress(...args);
-export const getKastleCachedAccountAddress = (...args: Parameters<typeof kastleRawTxRuntime.getKastleCachedAccountAddress>) =>
-  kastleRawTxRuntime.getKastleCachedAccountAddress(...args);
-export const buildKastleRawTxJson = (...args: Parameters<typeof kastleRawTxRuntime.buildKastleRawTxJson>) =>
-  kastleRawTxRuntime.buildKastleRawTxJson(...args);
-
-const ghostBridgeRuntime = createGhostBridgeRuntime({
-  scanTimeoutMs: GHOST_PROVIDER_SCAN_TIMEOUT_MS,
-});
-
-export const probeGhostProviders = (...args: Parameters<typeof ghostBridgeRuntime.probeGhostProviders>) =>
-  ghostBridgeRuntime.probeGhostProviders(...args);
-
-export const ghostInvoke = (...args: Parameters<typeof ghostBridgeRuntime.ghostInvoke>) =>
-  ghostBridgeRuntime.ghostInvoke(...args);
 
 export async function promptForTxidIfNeeded(txid: string, promptLabel: string, rawPayload?: string) {
   if (txid && isLikelyTxid(txid)) return txid;
