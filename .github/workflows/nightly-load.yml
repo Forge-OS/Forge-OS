@@ -1,0 +1,66 @@
+name: Nightly Load
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  pipeline-load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Redis Pipeline Load Harness
+        env:
+          LOAD_PIPELINE_SCHEDULER_REDIS_URL: redis://127.0.0.1:6379
+          LOAD_PIPELINE_CALLBACK_REDIS_URL: redis://127.0.0.1:6379
+          LOAD_PIPELINE_SCHEDULER_INSTANCES: "2"
+          LOAD_PIPELINE_AGENTS: "24"
+          LOAD_PIPELINE_TICKS: "16"
+          LOAD_PIPELINE_RECEIPTS: "64"
+          LOAD_PIPELINE_TX_BUILDS: "32"
+          LOAD_PIPELINE_CONCURRENCY: "8"
+          LOAD_PIPELINE_TX_BUILDER_MODE: local-wasm
+          LOAD_PIPELINE_MAX_TOTAL_ERRORS: "0"
+          LOAD_PIPELINE_MAX_ERROR_RATE_PCT: "0.5"
+          LOAD_PIPELINE_MAX_P95_SCHEDULER_TICK_MS: "750"
+          LOAD_PIPELINE_MAX_P95_RECEIPT_POST_MS: "250"
+          LOAD_PIPELINE_MAX_P95_TX_BUILDER_MS: "2500"
+          LOAD_PIPELINE_MAX_P95_SCHEDULER_CALLBACK_MS: "500"
+          LOAD_PIPELINE_MAX_SCHEDULER_SATURATION_EVENTS: "200"
+          LOAD_PIPELINE_MAX_CALLBACK_DUPLICATE_EVENTS: "0"
+          LOAD_PIPELINE_MAX_CALLBACK_STALE_FENCE_EVENTS: "0"
+        run: |
+          mkdir -p .artifacts
+          npm run load:pipeline | tee .artifacts/nightly-load.log
+
+      - name: Upload Load Harness Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-load-artifacts
+          path: .artifacts
+          if-no-files-found: ignore

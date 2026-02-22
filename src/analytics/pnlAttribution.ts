@@ -75,21 +75,111 @@ export type PnlAttributionSummary = {
   receiptCoveragePct: number;
   realizedReceiptCoveragePct: number;
   chainFeeCoveragePct: number;
+  realizedMinConfirmations: number;
+  confirmationFloorObservedMin: number;
+  confirmationFloorObservedMax: number;
+  provenanceChainSignals: number;
+  provenanceBackendSignals: number;
+  provenanceEstimatedSignals: number;
   missedFillKas: number;
   avgSignalConfidence: number;
   avgExpectedValuePct: number;
   signalQualityScore: number;
+  confidenceBrierScore: number;
+  evCalibrationErrorPct: number;
+  realizedVsExpectedEdgeKas: number;
+  regimeHitRatePct: number;
+  regimeHitSamples: number;
   timingAlphaPct: number;
   timingWins: number;
   timingSamples: number;
   rows: Array<{ label: string; value: number; color?: string; hint?: string }>;
 };
 
+export type RealizedConfirmationDepthPolicy = {
+  base?: number;
+  byAction?: Partial<Record<"ACCUMULATE" | "REDUCE" | "REBALANCE" | "HOLD", number>>;
+  byRisk?: Partial<Record<"LOW" | "MEDIUM" | "HIGH", number>>;
+  amountTiersKas?: Array<{ minAmountKas: number; minConfirmations: number }>;
+};
+
+function normalizeRealizedConfirmationPolicy(
+  policy: RealizedConfirmationDepthPolicy | undefined,
+  fallbackBase: number
+) {
+  const base = Math.max(1, Math.round(n(policy?.base, fallbackBase)));
+  const byAction: Record<string, number> = {};
+  const byRisk: Record<string, number> = {};
+  for (const [k, v] of Object.entries(policy?.byAction || {})) {
+    const key = String(k || "").toUpperCase();
+    if (!key) continue;
+    byAction[key] = Math.max(1, Math.round(n(v, base)));
+  }
+  for (const [k, v] of Object.entries(policy?.byRisk || {})) {
+    const key = String(k || "").toUpperCase();
+    if (!key) continue;
+    byRisk[key] = Math.max(1, Math.round(n(v, base)));
+  }
+  const amountTiersKas = Array.isArray(policy?.amountTiersKas)
+    ? policy!.amountTiersKas
+        .map((t) => ({
+          minAmountKas: Math.max(0, n((t as any)?.minAmountKas, 0)),
+          minConfirmations: Math.max(1, Math.round(n((t as any)?.minConfirmations, base))),
+        }))
+        .filter((t) => t.minAmountKas >= 0 && t.minConfirmations >= 1)
+        .sort((a, b) => a.minAmountKas - b.minAmountKas)
+    : [];
+  return { base, byAction, byRisk, amountTiersKas };
+}
+
+function inferRiskTierFromQueueItem(item: any): "LOW" | "MEDIUM" | "HIGH" | "" {
+  const explicitRisk = String(item?.dec?.risk || item?.dec?.quant_metrics?.risk_profile || "").toUpperCase();
+  if (explicitRisk === "LOW" || explicitRisk === "MEDIUM" || explicitRisk === "HIGH") return explicitRisk as any;
+  const riskScore = n(item?.dec?.risk_score, NaN);
+  if (!Number.isFinite(riskScore)) return "";
+  if (riskScore >= 0.7) return "HIGH";
+  if (riskScore >= 0.4) return "MEDIUM";
+  return "LOW";
+}
+
+function requiredRealizedConfirmationsForItem(item: any, policy: ReturnType<typeof normalizeRealizedConfirmationPolicy>) {
+  let required = Math.max(1, Number(policy?.base || 1));
+  const action = String(item?.type || item?.dec?.action || "").toUpperCase();
+  if (action && policy?.byAction?.[action] != null) {
+    required = Math.max(required, Math.max(1, Math.round(n(policy.byAction[action], required))));
+  }
+  const riskTier = inferRiskTierFromQueueItem(item);
+  if (riskTier && policy?.byRisk?.[riskTier] != null) {
+    required = Math.max(required, Math.max(1, Math.round(n(policy.byRisk[riskTier], required))));
+  }
+  const amountKas = Math.max(0, n(item?.amount_kas, 0));
+  for (const tier of policy?.amountTiersKas || []) {
+    if (amountKas >= Math.max(0, n(tier?.minAmountKas, 0))) {
+      required = Math.max(required, Math.max(1, Math.round(n(tier?.minConfirmations, required))));
+    }
+  }
+  return required;
+}
+
+function regimePredictionHit(regimeRaw: any, movePct: number) {
+  const regime = String(regimeRaw || "").toUpperCase();
+  if (!regime || !Number.isFinite(movePct)) return null;
+  const absMove = Math.abs(movePct);
+  if (regime.includes("TREND_UP")) return movePct > 0;
+  if (regime.includes("TREND_DOWN")) return movePct < 0;
+  if (regime.includes("RISK_OFF")) return movePct <= 0;
+  if (regime.includes("RANGE_LOW") || regime === "RANGE") return absMove < 0.8;
+  if (regime.includes("RANGE_VOL")) return absMove >= 0.8;
+  return null;
+}
+
 export function derivePnlAttribution(params: {
   decisions: any[];
   queue: any[];
   log: any[];
   marketHistory: any[];
+  realizedMinConfirmations?: number;
+  confirmationDepthPolicy?: RealizedConfirmationDepthPolicy;
 }): PnlAttributionSummary {
   const decisions = Array.isArray(params.decisions) ? params.decisions : [];
   const queue = Array.isArray(params.queue) ? params.queue : [];
@@ -100,6 +190,11 @@ export function derivePnlAttribution(params: {
         ? params.marketHistory
         : [...params.marketHistory].sort((a, b) => n(a?.ts, 0) - n(b?.ts, 0)))
     : [];
+  const realizedMinConfirmations = Math.max(1, Math.round(n((params as any)?.realizedMinConfirmations, 1)));
+  const confirmationPolicy = normalizeRealizedConfirmationPolicy(
+    (params as any)?.confirmationDepthPolicy,
+    realizedMinConfirmations
+  );
 
   const actionable = decisions.filter((d) => {
     const action = String(d?.dec?.action || "HOLD").toUpperCase();
@@ -121,6 +216,10 @@ export function derivePnlAttribution(params: {
   let timingWins = 0;
   let qualityScoreAcc = 0;
   let qualitySamples = 0;
+  let confidenceBrierAcc = 0;
+  let confidenceBrierSamples = 0;
+  let regimeHitCount = 0;
+  let regimeHitSamples = 0;
 
   for (const item of decisions) {
     const dec = item?.dec || {};
@@ -156,6 +255,15 @@ export function derivePnlAttribution(params: {
       const aiPenalty = source === "quant-core" || source === "fallback" ? 0.03 : 0;
       qualityScoreAcc += clamp(calibrationScore - aiPenalty, 0, 1);
       qualitySamples += 1;
+
+      confidenceBrierAcc += (conf - realizedWin) ** 2;
+      confidenceBrierSamples += 1;
+
+      const regimeHit = regimePredictionHit(qm?.regime, movePct);
+      if (typeof regimeHit === "boolean") {
+        regimeHitSamples += 1;
+        if (regimeHit) regimeHitCount += 1;
+      }
     }
   }
 
@@ -166,8 +274,22 @@ export function derivePnlAttribution(params: {
   let realizedExecutionDriftKas = 0;
   let realizedChainFeeKas = 0;
   let chainFeeSignals = 0;
+  let provenanceChainSignals = 0;
+  let provenanceBackendSignals = 0;
+  let provenanceEstimatedSignals = 0;
+  let confirmationFloorObservedMin = 0;
+  let confirmationFloorObservedMax = 0;
+  let evCalibrationAbsErrPctAcc = 0;
+  let evCalibrationSamples = 0;
+  let realizedDirectionalEdgeKas = 0;
+  let expectedDirectionalEdgeKas = 0;
   for (const item of signed) {
     const receiptState = String(item?.receipt_lifecycle || "");
+    const receiptImportedFrom = String(item?.receipt_imported_from || "").toLowerCase();
+    const receiptSourcePath = String(item?.receipt_source_path || "").toLowerCase();
+    const confirmSource = String(item?.confirm_ts_source || "").toLowerCase();
+    const provenanceIsBackend = receiptImportedFrom === "callback_consumer" || receiptSourcePath.includes("callback-consumer");
+    const provenanceIsChain = receiptImportedFrom === "kaspa_api" || confirmSource === "chain";
     const hasTrackedReceipt =
       receiptState === "broadcasted" ||
       receiptState === "pending_confirm" ||
@@ -175,14 +297,29 @@ export function derivePnlAttribution(params: {
       receiptState === "failed" ||
       receiptState === "timeout";
     if (hasTrackedReceipt) receiptTrackedSignals += 1;
-    if (receiptState !== "confirmed") continue;
+    const confirmations = Math.max(0, n(item?.confirmations, 0));
+    const requiredConfirmations = requiredRealizedConfirmationsForItem(item, confirmationPolicy);
+    if (confirmationFloorObservedMin === 0 || requiredConfirmations < confirmationFloorObservedMin) {
+      confirmationFloorObservedMin = requiredConfirmations;
+    }
+    if (requiredConfirmations > confirmationFloorObservedMax) {
+      confirmationFloorObservedMax = requiredConfirmations;
+    }
+    const meetsRealizedConfirmationFloor = confirmations >= requiredConfirmations;
+    if (receiptState !== "confirmed") {
+      provenanceEstimatedSignals += 1;
+      continue;
+    }
+    if (provenanceIsBackend) provenanceBackendSignals += 1;
+    else if (provenanceIsChain) provenanceChainSignals += 1;
+    else provenanceEstimatedSignals += 1;
     confirmedSignals += 1;
     const amountKas = Math.max(0, n(item?.amount_kas, 0));
     const liq = String(item?.dec?.liquidity_impact || "MODERATE");
     confirmedEstimatedSlippageKas += amountKas * (slippageBpsForLiquidity(liq) / 10_000);
 
     const feeKas = n(item?.receipt_fee_kas, NaN);
-    if (Number.isFinite(feeKas) && feeKas >= 0) {
+    if (meetsRealizedConfirmationFloor && Number.isFinite(feeKas) && feeKas >= 0) {
       realizedChainFeeKas += feeKas;
       chainFeeSignals += 1;
     }
@@ -196,14 +333,28 @@ export function derivePnlAttribution(params: {
     const p1 = hasChainConfirmTs
       ? (nearestSnapshotPrice(marketHistory, confirmTs) ?? n(item?.confirm_price_usd, 0))
       : n(item?.confirm_price_usd, 0);
-    if (hasChainConfirmTs && p0 > 0 && p1 > 0) {
+    const backendSlippageKas = n(item?.receipt_slippage_kas, NaN);
+    const hasBackendSlippage = Number.isFinite(backendSlippageKas) && backendSlippageKas >= 0;
+    if (hasBackendSlippage && meetsRealizedConfirmationFloor) {
+      realizedReceiptSignals += 1;
+      realizedExecutionDriftKas += backendSlippageKas;
+      continue;
+    }
+    if (meetsRealizedConfirmationFloor && hasChainConfirmTs && p0 > 0 && p1 > 0) {
       realizedReceiptSignals += 1;
     }
-    if (p0 > 0 && p1 > 0 && amountKas > 0) {
+    if (meetsRealizedConfirmationFloor && p0 > 0 && p1 > 0 && amountKas > 0) {
       const side = String(item?.type || item?.dec?.action || "").toUpperCase();
       const direction = side === "REDUCE" ? -1 : 1;
       const movePct = (p1 - p0) / p0;
       realizedExecutionDriftKas += amountKas * Math.abs(movePct) * Math.abs(direction);
+
+      const signedMovePct = movePct * direction * 100;
+      const expectedValuePct = n(item?.dec?.expected_value_pct, 0);
+      realizedDirectionalEdgeKas += amountKas * (signedMovePct / 100);
+      expectedDirectionalEdgeKas += amountKas * (expectedValuePct / 100);
+      evCalibrationAbsErrPctAcc += Math.abs(signedMovePct - expectedValuePct);
+      evCalibrationSamples += 1;
     }
   }
 
@@ -223,6 +374,10 @@ export function derivePnlAttribution(params: {
   const avgExpectedValuePct = decisions.length > 0 ? expectedValueSum / decisions.length : 0;
   const timingAlphaPct = timingSamples > 0 ? timingAlphaAcc / timingSamples : 0;
   const signalQualityScore = qualitySamples > 0 ? qualityScoreAcc / qualitySamples : 0;
+  const confidenceBrierScore = confidenceBrierSamples > 0 ? confidenceBrierAcc / confidenceBrierSamples : 0;
+  const regimeHitRatePct = regimeHitSamples > 0 ? (regimeHitCount / regimeHitSamples) * 100 : 0;
+  const evCalibrationErrorPct = evCalibrationSamples > 0 ? evCalibrationAbsErrPctAcc / evCalibrationSamples : 0;
+  const realizedVsExpectedEdgeKas = realizedDirectionalEdgeKas - expectedDirectionalEdgeKas;
   const estimatedNetPnlKas = grossEdgeKas - feesKasLogged - slippageKasEstimated;
   const allExecutedConfirmed = executedSignals > 0 && confirmedSignals === executedSignals;
   const realizedReceiptCoveragePct = executedSignals > 0 ? (realizedReceiptSignals / executedSignals) * 100 : 0;
@@ -252,10 +407,21 @@ export function derivePnlAttribution(params: {
     receiptCoveragePct: Number(receiptCoveragePct.toFixed(2)),
     realizedReceiptCoveragePct: Number(realizedReceiptCoveragePct.toFixed(2)),
     chainFeeCoveragePct: Number(chainFeeCoveragePct.toFixed(2)),
+    realizedMinConfirmations,
+    confirmationFloorObservedMin: Math.max(0, Math.round(confirmationFloorObservedMin || confirmationPolicy.base)),
+    confirmationFloorObservedMax: Math.max(0, Math.round(confirmationFloorObservedMax || confirmationPolicy.base)),
+    provenanceChainSignals,
+    provenanceBackendSignals,
+    provenanceEstimatedSignals,
     missedFillKas: Number(missedFillKas.toFixed(6)),
     avgSignalConfidence: Number(avgSignalConfidence.toFixed(4)),
     avgExpectedValuePct: Number(avgExpectedValuePct.toFixed(4)),
     signalQualityScore: Number(signalQualityScore.toFixed(4)),
+    confidenceBrierScore: Number(confidenceBrierScore.toFixed(6)),
+    evCalibrationErrorPct: Number(evCalibrationErrorPct.toFixed(6)),
+    realizedVsExpectedEdgeKas: Number(realizedVsExpectedEdgeKas.toFixed(6)),
+    regimeHitRatePct: Number(regimeHitRatePct.toFixed(2)),
+    regimeHitSamples,
     timingAlphaPct: Number(timingAlphaPct.toFixed(4)),
     timingWins,
     timingSamples,
@@ -272,7 +438,7 @@ export function derivePnlAttribution(params: {
         value: Number((-hybridSlippageKas).toFixed(6)),
         hint:
           confirmedSignals > 0
-            ? "Confirmed receipts use realized execution drift; remaining fills use estimated liquidity impact"
+            ? "Confirmed receipts use backend slippage when available, otherwise realized execution drift; remaining fills use estimated liquidity impact"
             : "Liquidity-impact estimate from decision liquidity bucket",
       },
       {
@@ -280,15 +446,15 @@ export function derivePnlAttribution(params: {
         value: Number((-realizedExecutionDriftKas).toFixed(6)),
         hint:
           netPnlMode === "realized"
-            ? "Observed price drift using chain confirmation timestamps (receipt block time) and market snapshots"
-            : "Observed price drift between broadcast and confirmation timestamps for confirmed executions",
+            ? "Backend slippage or observed price drift using chain confirmation timestamps and market snapshots"
+            : "Backend slippage or observed price drift between broadcast and confirmation timestamps for confirmed executions",
       },
       {
         label: netPnlMode === "realized" ? "Net PnL (realized)" : confirmedSignals > 0 ? "Net PnL (hybrid)" : "Net PnL (est)",
         value: Number((confirmedSignals > 0 ? netPnlKas : estimatedNetPnlKas).toFixed(6)),
         hint:
           netPnlMode === "realized"
-            ? "All executed signals confirmed with chain receipt timestamps and receipt-aware execution drift"
+            ? `All executed signals confirmed with receipt-aware drift at >= ${realizedMinConfirmations} confirmation${realizedMinConfirmations === 1 ? "" : "s"}`
             : confirmedSignals > 0
             ? "Gross edge - fees - hybrid slippage (realized where receipts are confirmed)"
             : "Gross edge - fees - estimated slippage",

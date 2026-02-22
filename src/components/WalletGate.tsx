@@ -5,10 +5,8 @@ import { isKaspaAddress, normalizeKaspaAddress, shortAddr } from "../helpers";
 import { WalletAdapter } from "../wallet/WalletAdapter";
 import {
   FORGEOS_CONNECTABLE_WALLETS,
-  FORGEOS_UPCOMING_WALLET_CANDIDATES,
   walletClassLabel,
   walletMultiOutputLabel,
-  walletStatusLabel,
 } from "../wallet/walletCapabilityRegistry";
 import { formatForgeError } from "../runtime/errorTaxonomy";
 import { Badge, Btn, Card, Divider, ExtLink } from "./ui";
@@ -210,6 +208,36 @@ export function WalletGate({onConnect}: any) {
     };
   });
 
+  const walletSections = useMemo(() => {
+    const ordered = Array.isArray(wallets) ? wallets : [];
+    const direct = ordered.filter((w) => ["kasware", "kastle", "ghost"].includes(String(w.id)));
+    const mobileBridge = ordered.filter((w) => ["kaspium", "tangem", "onekey"].includes(String(w.id)));
+    const sandbox = ordered.filter((w) => String(w.id) === "demo");
+    const other = ordered.filter(
+      (w) => !direct.includes(w) && !mobileBridge.includes(w) && !sandbox.includes(w)
+    );
+    return [
+      {
+        key: "direct",
+        title: "Direct Wallets",
+        subtitle: "Browser-native Kaspa signing and broadcast in this session.",
+        items: [...direct, ...other.filter((w) => String(w.class) === "extension")],
+      },
+      {
+        key: "mobile-bridge",
+        title: "Mobile & Hardware Bridge",
+        subtitle: "Deep-link or bridge/manual handoff flows with non-custodial signing.",
+        items: [...mobileBridge, ...other.filter((w) => String(w.class) !== "extension" && String(w.id) !== "demo")],
+      },
+      {
+        key: "sandbox",
+        title: "Sandbox",
+        subtitle: "UI / workflow validation with no on-chain broadcast.",
+        items: sandbox,
+      },
+    ].filter((section) => section.items.length > 0);
+  }, [wallets]);
+
   return (
     <div className="forge-shell" style={{display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"clamp(18px, 2vw, 28px)"}}>
       <ForgeAtmosphere />
@@ -253,8 +281,8 @@ export function WalletGate({onConnect}: any) {
             </div>
             <div style={{fontSize:11, color:C.dim, letterSpacing:"0.08em", ...mono}}>AI-NATIVE FINANCIAL OPERATING SYSTEM · POWERED BY KASPA</div>
           </div>
-          <div className="forge-content" style={{width:"100%", maxWidth:560}}>
-            <Card p={32} style={{width:"100%"}}>
+          <div className="forge-content" style={{width:"100%", maxWidth:760}}>
+            <Card p={24} style={{width:"100%"}}>
               <div style={{fontSize:14, color:C.text, fontWeight:700, ...mono, marginBottom:4}}>Connect Wallet</div>
               <div style={{fontSize:12, color:C.dim, marginBottom:14}}>
                 All operations are wallet-native. Forge.OS never stores private keys or signs transactions on your behalf.
@@ -263,55 +291,91 @@ export function WalletGate({onConnect}: any) {
                 Runtime network: {NETWORK_LABEL} · accepted prefixes: {ALLOWED_ADDRESS_PREFIXES.join(", ")}
               </div>
 
-              <div className="forge-wallet-grid">
-                {wallets.map(w=> (
-                  <div
-                    key={w.id}
-                    className={`forge-wallet-card ${lastProvider === w.id ? "forge-wallet-card--preferred" : ""}`}
-                  >
-                    <div style={{display:"flex", alignItems:"center", gap:12}}>
-                      {w.logoSrc ? (
-                        <div
-                          style={{
-                            width: 34,
-                            height: 34,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            background: "rgba(255,255,255,0.02)",
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 6,
-                            overflow: "hidden",
-                            flexShrink: 0,
-                          }}
-                        >
-                          <img src={w.logoSrc} alt={`${w.name} logo`} style={{width: 24, height: 24, objectFit: "contain"}} />
-                        </div>
-                      ) : (
-                        <div style={{fontSize:24, width:34, display:"flex", justifyContent:"center", flexShrink:0}}>{w.uiIcon}</div>
-                      )}
-                      <div style={{flex:1}}>
-                        <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
-                          <div style={{fontSize:13, color:C.text, fontWeight:700, ...mono}}>{w.name}</div>
-                          {lastProvider === w.id ? <Badge text="LAST USED" color={C.accent}/> : null}
-                          <Badge text={walletClassLabel(w.class)} color={C.dim} />
-                        </div>
-                        <div style={{fontSize:11, color:C.dim, marginTop:2}}>{w.description}</div>
+              <div className="forge-wallet-sections">
+                {walletSections.map((section) => (
+                  <div key={section.key} className="forge-wallet-section">
+                    <div style={{display:"flex", justifyContent:"space-between", gap:8, alignItems:"center", marginBottom:8, flexWrap:"wrap"}}>
+                      <div>
+                        <div style={{fontSize:12, color:C.text, fontWeight:700, ...mono, letterSpacing:"0.08em"}}>{section.title}</div>
+                        <div style={{fontSize:10, color:C.dim, marginTop:2}}>{section.subtitle}</div>
                       </div>
-                      <Badge text={w.statusText} color={w.statusColor}/>
+                      <Badge text={`${section.items.length} WALLET${section.items.length === 1 ? "" : "S"}`} color={C.dim} />
                     </div>
+                    <div className="forge-wallet-grid forge-wallet-grid--matrix">
+                      {section.items.map((w: any) => (
+                        <div
+                          key={w.id}
+                          className={`forge-wallet-card ${lastProvider === w.id ? "forge-wallet-card--preferred" : ""}`}
+                        >
+                          <div className="forge-wallet-card-head">
+                            {w.logoSrc ? (
+                              <div
+                                style={{
+                                  width: 32,
+                                  height: 32,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  background: "rgba(255,255,255,0.02)",
+                                  border: `1px solid ${C.border}`,
+                                  borderRadius: 6,
+                                  overflow: "hidden",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <img src={w.logoSrc} alt={`${w.name} logo`} style={{width: 22, height: 22, objectFit: "contain"}} />
+                              </div>
+                            ) : (
+                              <div style={{fontSize:22, width:32, display:"flex", justifyContent:"center", flexShrink:0}}>{w.uiIcon}</div>
+                            )}
+                            <div style={{minWidth:0, flex:1}}>
+                              <div style={{display:"flex", gap:6, alignItems:"center", flexWrap:"wrap"}}>
+                                <div style={{fontSize:12, color:C.text, fontWeight:700, ...mono}}>{w.name}</div>
+                                {lastProvider === w.id ? <Badge text="LAST USED" color={C.accent}/> : null}
+                                <Badge text={walletClassLabel(w.class)} color={C.dim} />
+                              </div>
+                              <div style={{fontSize:10, color:w.statusColor, marginTop:4, ...mono}}>
+                                {w.statusText}
+                              </div>
+                            </div>
+                          </div>
 
-                    <div style={{display:"flex", gap:8, marginTop:12, flexWrap:"wrap"}}>
-                      <Btn
-                        onClick={() => connect(w.id)}
-                        disabled={busy && busyProvider !== w.id}
-                        variant={w.id === "demo" ? "ghost" : "primary"}
-                        size="sm"
-                        style={{minWidth:190}}
-                      >
-                        {busyProvider === w.id ? "CONNECTING..." : w.cta}
-                      </Btn>
-                      {w.docsUrl ? <ExtLink href={w.docsUrl} label="DOCS ↗" /> : null}
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: C.dim,
+                              marginTop: 8,
+                              lineHeight: 1.35,
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                            }}
+                            title={w.description}
+                          >
+                            {w.description}
+                          </div>
+
+                          <div style={{display:"flex", gap:6, marginTop:8, flexWrap:"wrap"}}>
+                            <Badge text={walletMultiOutputLabel(w.capabilities.nativeMultiOutputSend)} color={C.text}/>
+                            {w.capabilities.network ? <Badge text="NETWORK AWARE" color={C.ok} /> : null}
+                            {w.capabilities.manualTxid ? <Badge text="MANUAL TXID" color={C.warn} /> : null}
+                          </div>
+
+                          <div className="forge-wallet-card-actions">
+                            <Btn
+                              onClick={() => connect(w.id)}
+                              disabled={busy && busyProvider !== w.id}
+                              variant={w.id === "demo" ? "ghost" : "primary"}
+                              size="sm"
+                              style={{flex:1, minWidth:0}}
+                            >
+                              {busyProvider === w.id ? "CONNECTING..." : w.cta}
+                            </Btn>
+                            {w.docsUrl ? <ExtLink href={w.docsUrl} label="DOCS ↗" /> : null}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -322,72 +386,6 @@ export function WalletGate({onConnect}: any) {
               <Divider m={18}/>
               <div style={{fontSize:11, color:C.dim, ...mono, lineHeight:1.6}}>
                 Forge.OS never requests your private key · All transaction signing happens in your wallet · {NETWORK_LABEL} only
-              </div>
-            </Card>
-
-            <Card p={18} style={{width:"100%", marginTop:12}}>
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:10, flexWrap:"wrap"}}>
-                <div style={{fontSize:12, color:C.text, fontWeight:700, ...mono}}>Wallet Compatibility Roadmap</div>
-                <Badge text="CAPABILITY REGISTRY" color={C.accent} />
-              </div>
-              <div style={{fontSize:11, color:C.dim, marginBottom:10}}>
-                Upcoming wallets are grouped by integration class. Cards show likely connection model and current multi-output support status for treasury-combined tx planning.
-              </div>
-              <div style={{display:"grid", gap:8}}>
-                {FORGEOS_UPCOMING_WALLET_CANDIDATES.map((w) => (
-                  <div
-                    key={w.id}
-                    style={{
-                      background: C.s2,
-                      border: `1px solid ${C.border}`,
-                      borderRadius: 6,
-                      padding: "10px 12px",
-                    }}
-                  >
-                    <div style={{display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", flexWrap:"wrap"}}>
-                      <div style={{display:"flex", gap:10, alignItems:"flex-start"}}>
-                        {w.logoSrc ? (
-                          <div
-                            style={{
-                              width: 22,
-                              height: 22,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              borderRadius: 4,
-                              overflow: "hidden",
-                              border: `1px solid ${C.border}`,
-                              background: "rgba(255,255,255,0.02)",
-                            }}
-                          >
-                            <img src={w.logoSrc} alt={`${w.name} logo`} style={{width: 16, height: 16, objectFit: "contain"}} />
-                          </div>
-                        ) : (
-                          <div style={{fontSize:18, lineHeight:1}}>{w.uiIcon}</div>
-                        )}
-                        <div>
-                          <div style={{display:"flex", gap:6, alignItems:"center", flexWrap:"wrap"}}>
-                            <span style={{fontSize:12, color:C.text, fontWeight:700, ...mono}}>{w.name}</span>
-                            <Badge text={walletStatusLabel(w.status)} color={w.status === "planned" ? C.warn : C.dim} />
-                            <Badge text={walletClassLabel(w.class)} color={C.dim} />
-                            <Badge text={walletMultiOutputLabel(w.capabilities.nativeMultiOutputSend)} color={C.text} />
-                          </div>
-                          <div style={{fontSize:11, color:C.dim, marginTop:3}}>{w.description}</div>
-                          {w.notes?.[0] ? (
-                            <div style={{fontSize:10, color:C.dim, marginTop:6, ...mono}}>
-                              {w.notes[0]}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
-                        <Badge text={`MODE ${String(w.connectMode).toUpperCase()}`} color={C.purple} />
-                        {w.docsUrl ? <ExtLink href={w.docsUrl} label="DOCS ↗" /> : null}
-                        {!w.docsUrl && w.websiteUrl ? <ExtLink href={w.websiteUrl} label="SITE ↗" /> : null}
-                      </div>
-                    </div>
-                  </div>
-                ))}
               </div>
             </Card>
           </div>

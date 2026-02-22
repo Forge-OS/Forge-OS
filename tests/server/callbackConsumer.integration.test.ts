@@ -91,6 +91,33 @@ describe("callback consumer reference service", () => {
     expect(newerFence.body.accepted).toBe(true);
 
     const txid = "a".repeat(64);
+    const sseController = new AbortController();
+    const sseRes = await fetch(`http://127.0.0.1:${port}/v1/execution-receipts/stream?replay=0`, {
+      signal: sseController.signal,
+    });
+    expect(sseRes.ok).toBe(true);
+    const sseReader = sseRes.body?.getReader();
+    expect(sseReader).toBeTruthy();
+    let sseBuffer = "";
+    const waitForReceiptEvent = async (needleTxid: string, timeoutMs = 5000) => {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        const next = await Promise.race([
+          sseReader!.read(),
+          new Promise<{ timeout: true }>((resolve) => setTimeout(() => resolve({ timeout: true }), 250)),
+        ]);
+        if ((next as any)?.timeout) {
+          if (sseBuffer.includes(needleTxid) && sseBuffer.includes("event: receipt")) return;
+          continue;
+        }
+        const chunk = next as ReadableStreamReadResult<Uint8Array>;
+        if (chunk.done) break;
+        sseBuffer += new TextDecoder().decode(chunk.value);
+        if (sseBuffer.includes(needleTxid) && sseBuffer.includes("event: receipt")) return;
+      }
+      throw new Error("sse_receipt_event_timeout");
+    };
+
     const receiptAccepted = await httpJson(`http://127.0.0.1:${port}/v1/execution-receipts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -106,6 +133,7 @@ describe("callback consumer reference service", () => {
     });
     expect(receiptAccepted.res.status).toBe(200);
     expect(receiptAccepted.body.txid).toBe(txid);
+    await waitForReceiptEvent(txid);
 
     const receiptDuplicate = await httpJson(`http://127.0.0.1:${port}/v1/execution-receipts`, {
       method: "POST",
@@ -124,11 +152,48 @@ describe("callback consumer reference service", () => {
     expect(receiptFetch.res.status).toBe(200);
     expect(receiptFetch.body.receipt.txid).toBe(txid);
 
+    const consistency1 = await httpJson(`http://127.0.0.1:${port}/v1/receipt-consistency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        txid,
+        queueId: "q-1",
+        status: "consistent",
+        checkedTs: Date.now(),
+        provenance: "BACKEND",
+      }),
+    });
+    expect(consistency1.res.status).toBe(200);
+    expect(consistency1.body.ok).toBe(true);
+
+    const consistency2 = await httpJson(`http://127.0.0.1:${port}/v1/receipt-consistency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        txid,
+        queueId: "q-1",
+        status: "mismatch",
+        mismatches: ["confirm_ts", "fee_kas"],
+        checkedTs: Date.now(),
+        provenance: "BACKEND",
+        confirmTsDriftMs: 1800,
+        feeDiffKas: 0.002,
+      }),
+    });
+    expect(consistency2.res.status).toBe(200);
+    expect(consistency2.body.ok).toBe(true);
+
     const metricsRes = await fetch(`http://127.0.0.1:${port}/metrics`);
     const metricsText = await metricsRes.text();
     expect(metricsText).toContain("forgeos_callback_consumer_cycle_accepted_total 2");
     expect(metricsText).toContain("forgeos_callback_consumer_cycle_duplicate_total 1");
     expect(metricsText).toContain("forgeos_callback_consumer_cycle_stale_fence_total 1");
+    expect(metricsText).toContain("forgeos_callback_consumer_receipt_sse_events_total");
+    expect(metricsText).toContain("forgeos_callback_consumer_receipt_consistency_checks_total 2");
+    expect(metricsText).toContain("forgeos_callback_consumer_receipt_consistency_mismatch_total 1");
+    expect(metricsText).toContain('forgeos_callback_consumer_receipt_consistency_mismatch_by_type_total{type="confirm_ts"} 1');
+    expect(metricsText).toContain('forgeos_callback_consumer_receipt_consistency_mismatch_by_type_total{type="fee_kas"} 1');
+
+    try { sseController.abort(); } catch {}
   }, 20_000);
 });
-

@@ -20,12 +20,17 @@ const REDIS_CONNECT_TIMEOUT_MS = Math.max(250, Number(process.env.CALLBACK_CONSU
 const IDEMPOTENCY_TTL_MS = Math.max(1000, Number(process.env.CALLBACK_CONSUMER_IDEMPOTENCY_TTL_MS || 24 * 60 * 60 * 1000));
 const MAX_EVENTS = Math.max(10, Number(process.env.CALLBACK_CONSUMER_MAX_EVENTS || 500));
 const MAX_RECEIPTS = Math.max(10, Number(process.env.CALLBACK_CONSUMER_MAX_RECEIPTS || 2000));
+const RECEIPT_SSE_HEARTBEAT_MS = Math.max(1000, Number(process.env.CALLBACK_CONSUMER_RECEIPT_SSE_HEARTBEAT_MS || 15000));
+const RECEIPT_SSE_MAX_CLIENTS = Math.max(1, Number(process.env.CALLBACK_CONSUMER_RECEIPT_SSE_MAX_CLIENTS || 200));
+const RECEIPT_SSE_REPLAY_DEFAULT_LIMIT = Math.max(0, Number(process.env.CALLBACK_CONSUMER_RECEIPT_SSE_REPLAY_DEFAULT_LIMIT || 100));
 
 let redisClient = null;
 const recentEvents = [];
 const recentReceipts = new Map();
 const idempotencyMemory = new Map();
 const fenceMemory = new Map();
+const receiptSseClients = new Map();
+let nextReceiptSseClientId = 1;
 
 const metrics = {
   startedAtMs: Date.now(),
@@ -38,6 +43,12 @@ const metrics = {
   cycleErrorsTotal: 0,
   receiptAcceptedTotal: 0,
   receiptDuplicateTotal: 0,
+  receiptConsistencyChecksTotal: 0,
+  receiptConsistencyMismatchTotal: 0,
+  receiptConsistencyByTypeTotal: new Map(),
+  receiptConsistencyByStatusTotal: new Map(),
+  receiptSseConnectionsTotal: 0,
+  receiptSseEventsTotal: 0,
   redisEnabled: false,
   redisConnected: false,
   redisOpsTotal: 0,
@@ -83,6 +94,13 @@ function getAuthToken(req) {
   return String(req.headers["x-callback-consumer-token"] || "").trim();
 }
 
+function getAuthTokenWithQuery(req, url) {
+  const headerToken = getAuthToken(req);
+  if (headerToken) return headerToken;
+  if (!url) return "";
+  return String(url.searchParams.get("token") || "").trim();
+}
+
 function json(res, status, body, origin = "*") {
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -101,6 +119,118 @@ function text(res, status, body, origin = "*") {
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+function sseWrite(res, event, data, id) {
+  if (id != null) res.write(`id: ${String(id)}\n`);
+  if (event) res.write(`event: ${String(event)}\n`);
+  const payload = typeof data === "string" ? data : JSON.stringify(data);
+  for (const line of String(payload).split(/\r?\n/)) {
+    res.write(`data: ${line}\n`);
+  }
+  res.write("\n");
+}
+
+function sanitizeReceiptSseReplayLimit(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(0, Math.min(MAX_RECEIPTS, Math.round(n)));
+}
+
+function closeReceiptSseClient(clientId) {
+  const client = receiptSseClients.get(clientId);
+  if (!client) return;
+  receiptSseClients.delete(clientId);
+  try { if (client.heartbeat) clearInterval(client.heartbeat); } catch {}
+  try { client.res.end(); } catch {}
+}
+
+function streamReceiptToSseClients(receipt) {
+  if (!receipt || receiptSseClients.size === 0) return;
+  const txid = String(receipt.txid || "").trim().toLowerCase();
+  const agentKey = String(receipt.agentKey || "").trim();
+  const payload = {
+    receipt,
+    ts: nowMs(),
+  };
+  for (const [clientId, client] of receiptSseClients.entries()) {
+    if (!client || !client.res) {
+      receiptSseClients.delete(clientId);
+      continue;
+    }
+    if (client.txid && client.txid !== txid) continue;
+    if (client.agentKey && client.agentKey !== agentKey) continue;
+    try {
+      sseWrite(client.res, "receipt", payload, `${nowMs()}:${txid}`);
+      metrics.receiptSseEventsTotal += 1;
+    } catch {
+      closeReceiptSseClient(clientId);
+    }
+  }
+}
+
+function openReceiptSseStream(req, res, origin, url) {
+  if (receiptSseClients.size >= RECEIPT_SSE_MAX_CLIENTS) {
+    json(res, 503, { error: { message: "receipt_sse_capacity_reached" } }, origin);
+    return false;
+  }
+  const txid = String(url.searchParams.get("txid") || "").trim().toLowerCase();
+  const agentKey = String(url.searchParams.get("agentKey") || "").trim();
+  const replay = !/^(0|false|no)$/i.test(String(url.searchParams.get("replay") || "1"));
+  const replayLimit = sanitizeReceiptSseReplayLimit(
+    url.searchParams.get("limit") || RECEIPT_SSE_REPLAY_DEFAULT_LIMIT
+  );
+  const clientId = nextReceiptSseClientId++;
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": origin,
+    "X-Accel-Buffering": "no",
+  });
+  if (typeof res.flushHeaders === "function") {
+    try { res.flushHeaders(); } catch {}
+  }
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`: heartbeat ${nowMs()}\n\n`);
+    } catch {
+      closeReceiptSseClient(clientId);
+    }
+  }, RECEIPT_SSE_HEARTBEAT_MS);
+
+  receiptSseClients.set(clientId, {
+    id: clientId,
+    res,
+    txid: txid || "",
+    agentKey: agentKey || "",
+    heartbeat,
+    openedAt: nowMs(),
+  });
+  metrics.receiptSseConnectionsTotal += 1;
+
+  sseWrite(res, "ready", { ok: true, txid: txid || null, agentKey: agentKey || null, replay }, `${nowMs()}:ready`);
+
+  if (replay && replayLimit > 0) {
+    const receipts = Array.from(recentReceipts.values())
+      .filter((entry) => (txid ? String(entry?.txid || "").toLowerCase() === txid : true))
+      .filter((entry) => (agentKey ? String(entry?.agentKey || "") === agentKey : true))
+      .slice(-replayLimit);
+    for (const receipt of receipts) {
+      try {
+        sseWrite(res, "receipt", { receipt, replay: true, ts: nowMs() }, `${nowMs()}:${String(receipt?.txid || "")}`);
+        metrics.receiptSseEventsTotal += 1;
+      } catch {
+        break;
+      }
+    }
+  }
+
+  req.on("close", () => closeReceiptSseClient(clientId));
+  req.on("error", () => closeReceiptSseClient(clientId));
+  return true;
 }
 
 function readJson(req) {
@@ -165,6 +295,106 @@ async function checkIdempotency(idempotencyKey) {
   idempotencyMemory.set(key, { expAt: now + IDEMPOTENCY_TTL_MS });
   pruneIdempotencyMemory(now);
   return { ok: true, duplicate: false, mode: "memory" };
+}
+
+async function acceptCycleWithFenceAndIdempotency(agentKey, idempotencyKey, fenceToken) {
+  const normalizedAgentKey = String(agentKey || "").trim();
+  const normalizedIdem = String(idempotencyKey || "").trim();
+  const normalizedFence = Math.max(0, Number(fenceToken || 0));
+  if (!normalizedAgentKey) return { ok: false, reason: "agent_key_required" };
+  if (!normalizedIdem) return { ok: false, reason: "idempotency_key_required" };
+  if (!Number.isFinite(normalizedFence)) return { ok: false, reason: "invalid_fence_token" };
+
+  if (redisClient) {
+    const result = await redisOp("cycle_fence_idem_atomic", (r) =>
+      r.eval(
+        `
+          local idemKey = KEYS[1]
+          local fenceKey = KEYS[2]
+          local idemTtl = tonumber(ARGV[1])
+          local incomingFence = tonumber(ARGV[2])
+          local currentFence = tonumber(redis.call("GET", fenceKey) or "0")
+          if redis.call("EXISTS", idemKey) == 1 then
+            return {"DUPLICATE", tostring(currentFence)}
+          end
+          if incomingFence < currentFence then
+            return {"STALE", tostring(currentFence)}
+          end
+          local ok = redis.call("SET", idemKey, "1", "NX", "PX", idemTtl)
+          if not ok then
+            return {"DUPLICATE", tostring(currentFence)}
+          end
+          if incomingFence > currentFence then
+            redis.call("SET", fenceKey, tostring(incomingFence))
+            currentFence = incomingFence
+          end
+          return {"ACCEPTED", tostring(currentFence)}
+        `,
+        {
+          keys: [
+            `${REDIS_KEYS.idempotencyPrefix}:${normalizedIdem}`,
+            `${REDIS_KEYS.fencePrefix}:${normalizedAgentKey}`,
+          ],
+          arguments: [String(IDEMPOTENCY_TTL_MS), String(normalizedFence)],
+        }
+      )
+    );
+    if (!Array.isArray(result) || !result[0]) {
+      return { ok: true, duplicate: false, stale: false, currentFence: 0, mode: "redis_fail_open" };
+    }
+    const decision = String(result[0] || "").toUpperCase();
+    const currentFence = Math.max(0, Number(result[1] || 0));
+    if (decision === "DUPLICATE") return { ok: true, duplicate: true, stale: false, currentFence, mode: "redis" };
+    if (decision === "STALE") return { ok: true, duplicate: false, stale: true, currentFence, mode: "redis" };
+    return { ok: true, duplicate: false, stale: false, currentFence, mode: "redis" };
+  }
+
+  const idem = await checkIdempotency(normalizedIdem);
+  if (!idem.ok) return idem;
+  if (idem.duplicate) return { ok: true, duplicate: true, stale: false, currentFence: await getFenceToken(normalizedAgentKey), mode: "memory" };
+  const currentFence = await getFenceToken(normalizedAgentKey);
+  if (normalizedFence < currentFence) return { ok: true, duplicate: false, stale: true, currentFence, mode: "memory" };
+  if (normalizedFence > currentFence) await setFenceToken(normalizedAgentKey, normalizedFence);
+  return { ok: true, duplicate: false, stale: false, currentFence: Math.max(currentFence, normalizedFence), mode: "memory" };
+}
+
+async function acceptReceiptIdempotencyAndPersist(idempotencyKey, receipt) {
+  const key = String(idempotencyKey || "").trim();
+  if (!key) return { ok: false, reason: "idempotency_key_required" };
+  if (redisClient) {
+    const receiptKey = `${REDIS_KEYS.receiptPrefix}:${String(receipt?.txid || "").trim().toLowerCase()}`;
+    const receiptTtlMs = IDEMPOTENCY_TTL_MS * 7;
+    const payload = JSON.stringify(receipt);
+    const result = await redisOp("receipt_idem_persist_atomic", (r) =>
+      r.eval(
+        `
+          local idemKey = KEYS[1]
+          local receiptKey = KEYS[2]
+          local idemTtl = tonumber(ARGV[1])
+          local receiptTtl = tonumber(ARGV[2])
+          local receiptJson = ARGV[3]
+          if redis.call("EXISTS", idemKey) == 1 then
+            return {"DUPLICATE"}
+          end
+          local ok = redis.call("SET", idemKey, "1", "NX", "PX", idemTtl)
+          if not ok then
+            return {"DUPLICATE"}
+          end
+          redis.call("SET", receiptKey, receiptJson, "PX", receiptTtl)
+          return {"ACCEPTED"}
+        `,
+        {
+          keys: [`${REDIS_KEYS.idempotencyPrefix}:${key}`, receiptKey],
+          arguments: [String(IDEMPOTENCY_TTL_MS), String(receiptTtlMs), payload],
+        }
+      )
+    );
+    if (!Array.isArray(result) || !result[0]) return { ok: true, duplicate: false, mode: "redis_fail_open" };
+    const decision = String(result[0] || "").toUpperCase();
+    if (decision === "DUPLICATE") return { ok: true, duplicate: true, mode: "redis" };
+    return { ok: true, duplicate: false, mode: "redis" };
+  }
+  return checkIdempotency(key);
 }
 
 async function getFenceToken(agentKey) {
@@ -237,6 +467,44 @@ function normalizeReceiptRequest(req, body) {
   return { idempotencyKey, receipt };
 }
 
+function normalizeReceiptConsistencyRequest(body) {
+  const status = String(body?.status || "").trim().toLowerCase();
+  if (!["consistent", "mismatch", "insufficient"].includes(status)) {
+    throw new Error("invalid_receipt_consistency_status");
+  }
+  const txidRaw = String(body?.txid || "").trim().toLowerCase();
+  if (txidRaw && !/^[a-f0-9]{64}$/i.test(txidRaw)) throw new Error("invalid_txid");
+  const txid = txidRaw || null;
+  const mismatches = Array.isArray(body?.mismatches)
+    ? body.mismatches.map((m) => String(m || "").trim().toLowerCase()).filter(Boolean).slice(0, 8)
+    : [];
+  const checkedTs = Number(body?.checkedTs || 0);
+  const report = {
+    txid,
+    queueId: body?.queueId ? String(body.queueId).slice(0, 120) : null,
+    agentId: body?.agentId ? String(body.agentId).slice(0, 120) : null,
+    agentName: body?.agentName ? String(body.agentName).slice(0, 120) : null,
+    status,
+    mismatches,
+    provenance: body?.provenance ? String(body.provenance).slice(0, 24).toUpperCase() : null,
+    truthLabel: body?.truthLabel ? String(body.truthLabel).slice(0, 48) : null,
+    checkedTs: Number.isFinite(checkedTs) && checkedTs > 0 ? Math.round(checkedTs) : nowMs(),
+    confirmTsDriftMs:
+      Number.isFinite(Number(body?.confirmTsDriftMs)) && Number(body.confirmTsDriftMs) >= 0
+        ? Math.round(Number(body.confirmTsDriftMs))
+        : null,
+    feeDiffKas:
+      Number.isFinite(Number(body?.feeDiffKas)) && Number(body.feeDiffKas) >= 0
+        ? Number(Number(body.feeDiffKas).toFixed(8))
+        : null,
+    slippageDiffKas:
+      Number.isFinite(Number(body?.slippageDiffKas)) && Number(body.slippageDiffKas) >= 0
+        ? Number(Number(body.slippageDiffKas).toFixed(8))
+        : null,
+  };
+  return report;
+}
+
 function pushRecentEvent(entry) {
   recentEvents.unshift(entry);
   if (recentEvents.length > MAX_EVENTS) recentEvents.length = MAX_EVENTS;
@@ -291,6 +559,25 @@ function exportPrometheus() {
   push("# HELP forgeos_callback_consumer_receipt_duplicate_total Execution receipts skipped by idempotency.");
   push("# TYPE forgeos_callback_consumer_receipt_duplicate_total counter");
   push(`forgeos_callback_consumer_receipt_duplicate_total ${metrics.receiptDuplicateTotal}`);
+  push("# HELP forgeos_callback_consumer_receipt_consistency_checks_total Receipt consistency checks reported by clients.");
+  push("# TYPE forgeos_callback_consumer_receipt_consistency_checks_total counter");
+  push(`forgeos_callback_consumer_receipt_consistency_checks_total ${metrics.receiptConsistencyChecksTotal}`);
+  push("# HELP forgeos_callback_consumer_receipt_consistency_mismatch_total Receipt consistency mismatches reported by clients.");
+  push("# TYPE forgeos_callback_consumer_receipt_consistency_mismatch_total counter");
+  push(`forgeos_callback_consumer_receipt_consistency_mismatch_total ${metrics.receiptConsistencyMismatchTotal}`);
+  push("# HELP forgeos_callback_consumer_receipt_consistency_by_status_total Receipt consistency reports by status.");
+  push("# TYPE forgeos_callback_consumer_receipt_consistency_by_status_total counter");
+  push("# HELP forgeos_callback_consumer_receipt_consistency_mismatch_by_type_total Receipt consistency mismatches by mismatch type.");
+  push("# TYPE forgeos_callback_consumer_receipt_consistency_mismatch_by_type_total counter");
+  push("# HELP forgeos_callback_consumer_receipt_sse_connections_total Receipt SSE connections opened.");
+  push("# TYPE forgeos_callback_consumer_receipt_sse_connections_total counter");
+  push(`forgeos_callback_consumer_receipt_sse_connections_total ${metrics.receiptSseConnectionsTotal}`);
+  push("# HELP forgeos_callback_consumer_receipt_sse_events_total Receipt SSE events emitted.");
+  push("# TYPE forgeos_callback_consumer_receipt_sse_events_total counter");
+  push(`forgeos_callback_consumer_receipt_sse_events_total ${metrics.receiptSseEventsTotal}`);
+  push("# HELP forgeos_callback_consumer_receipt_sse_clients Current connected receipt SSE clients.");
+  push("# TYPE forgeos_callback_consumer_receipt_sse_clients gauge");
+  push(`forgeos_callback_consumer_receipt_sse_clients ${receiptSseClients.size}`);
   push("# HELP forgeos_callback_consumer_recent_events_count In-memory stored callback events.");
   push("# TYPE forgeos_callback_consumer_recent_events_count gauge");
   push(`forgeos_callback_consumer_recent_events_count ${recentEvents.length}`);
@@ -316,6 +603,16 @@ function exportPrometheus() {
   for (const [k, v] of metrics.httpResponsesByRouteStatus.entries()) {
     const [route, status] = String(k).split("|");
     push(`forgeos_callback_consumer_http_responses_total{route="${esc(route)}",status="${esc(status)}"} ${v}`);
+  }
+  for (const [status, v] of metrics.receiptConsistencyByStatusTotal.entries()) {
+    push(
+      `forgeos_callback_consumer_receipt_consistency_by_status_total{status="${esc(status)}"} ${v}`
+    );
+  }
+  for (const [kind, v] of metrics.receiptConsistencyByTypeTotal.entries()) {
+    push(
+      `forgeos_callback_consumer_receipt_consistency_mismatch_by_type_total{type="${esc(kind)}"} ${v}`
+    );
   }
   return `${lines.join("\n")}\n`;
 }
@@ -379,7 +676,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (routeRequiresAuth(req, url.pathname)) {
-    const token = getAuthToken(req);
+    const token = getAuthTokenWithQuery(req, url);
     if (!token || !AUTH_TOKENS.includes(token)) {
       metrics.authFailuresTotal += 1;
       json(res, 401, { error: { message: "unauthorized" } }, origin);
@@ -404,6 +701,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/metrics") {
     text(res, 200, exportPrometheus(), origin);
     recordHttp(routeKey, 200);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/v1/execution-receipts/stream") {
+    const opened = openReceiptSseStream(req, res, origin, url);
+    if (opened) {
+      recordHttp(routeKey, 200);
+    }
     return;
   }
 
@@ -437,25 +742,30 @@ const server = http.createServer(async (req, res) => {
     try {
       body = await readJson(req);
       const normalized = normalizeCycleRequest(req, body);
-      const idem = await checkIdempotency(normalized.idempotencyKey);
-      if (!idem.ok) throw new Error(String(idem.reason || "idempotency_failed"));
-      if (idem.duplicate) {
+      const cycleGate = await acceptCycleWithFenceAndIdempotency(
+        normalized.agentKey,
+        normalized.idempotencyKey,
+        normalized.fenceToken
+      );
+      if (!cycleGate.ok) throw new Error(String(cycleGate.reason || "idempotency_failed"));
+      if (cycleGate.duplicate) {
         metrics.cycleDuplicateTotal += 1;
         json(res, 200, { ok: true, duplicate: true, reason: "idempotency_duplicate", ts: nowMs() }, origin);
         recordHttp(routeKey, 200);
         return;
       }
-      const currentFence = await getFenceToken(normalized.agentKey);
-      if (normalized.fenceToken < currentFence) {
+      if (cycleGate.stale) {
         metrics.cycleStaleFenceTotal += 1;
         json(res, 409, {
-          error: { message: "stale_fence_token", currentFence, receivedFence: normalized.fenceToken, agentKey: normalized.agentKey },
+          error: {
+            message: "stale_fence_token",
+            currentFence: Math.max(0, Number(cycleGate.currentFence || 0)),
+            receivedFence: normalized.fenceToken,
+            agentKey: normalized.agentKey,
+          },
         }, origin);
         recordHttp(routeKey, 409);
         return;
-      }
-      if (normalized.fenceToken > currentFence) {
-        await setFenceToken(normalized.agentKey, normalized.fenceToken);
       }
       pushRecentEvent({
         id: crypto.randomUUID(),
@@ -489,7 +799,7 @@ const server = http.createServer(async (req, res) => {
     try {
       body = await readJson(req);
       const { idempotencyKey, receipt } = normalizeReceiptRequest(req, body);
-      const idem = await checkIdempotency(idempotencyKey);
+      const idem = await acceptReceiptIdempotencyAndPersist(idempotencyKey, receipt);
       if (!idem.ok) throw new Error(String(idem.reason || "idempotency_failed"));
       if (idem.duplicate) {
         metrics.receiptDuplicateTotal += 1;
@@ -498,12 +808,53 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       upsertReceipt(receipt);
-      await persistReceiptToRedis(receipt);
+      if (!redisClient || String(idem.mode || "").includes("fail_open")) {
+        await persistReceiptToRedis(receipt);
+      }
+      streamReceiptToSseClients(receipt);
       metrics.receiptAcceptedTotal += 1;
       json(res, 200, { ok: true, accepted: true, txid: receipt.txid, receipt, ts: nowMs() }, origin);
       recordHttp(routeKey, 200);
     } catch (e) {
       json(res, 400, { error: { message: String(e?.message || "invalid_receipt") } }, origin);
+      recordHttp(routeKey, 400);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/receipt-consistency") {
+    let body;
+    try {
+      body = await readJson(req);
+      const report = normalizeReceiptConsistencyRequest(body);
+      metrics.receiptConsistencyChecksTotal += 1;
+      inc(metrics.receiptConsistencyByStatusTotal, report.status);
+      if (report.status === "mismatch") {
+        metrics.receiptConsistencyMismatchTotal += 1;
+        const mismatchTypes = report.mismatches.length ? report.mismatches : ["unknown"];
+        for (const kind of mismatchTypes) inc(metrics.receiptConsistencyByTypeTotal, String(kind));
+      }
+      if (report.status === "mismatch") {
+        pushRecentEvent({
+          id: crypto.randomUUID(),
+          type: "receipt_consistency_mismatch",
+          ts: nowMs(),
+          txid: report.txid,
+          queueId: report.queueId,
+          agentId: report.agentId,
+          agentName: report.agentName,
+          mismatches: report.mismatches,
+          provenance: report.provenance,
+          truthLabel: report.truthLabel,
+          confirmTsDriftMs: report.confirmTsDriftMs,
+          feeDiffKas: report.feeDiffKas,
+          slippageDiffKas: report.slippageDiffKas,
+        });
+      }
+      json(res, 200, { ok: true, accepted: true, ts: nowMs() }, origin);
+      recordHttp(routeKey, 200);
+    } catch (e) {
+      json(res, 400, { error: { message: String(e?.message || "invalid_receipt_consistency") } }, origin);
       recordHttp(routeKey, 400);
     }
     return;
@@ -521,4 +872,3 @@ server.listen(PORT, HOST, () => {
     `[forgeos-callback-consumer] auth=${authEnabled() ? "on" : "off"} redis=${metrics.redisEnabled ? (metrics.redisConnected ? "connected" : "degraded") : "off"}`
   );
 });
-

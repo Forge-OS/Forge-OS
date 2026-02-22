@@ -4,7 +4,7 @@ import { AGENT_SPLIT, EXPLORER, TREASURY, TREASURY_FEE_KAS, TREASURY_FEE_ONCHAIN
 import { fmtT } from "../../helpers";
 import { LOG_COL } from "../../log/seedLog";
 import { C, mono } from "../../tokens";
-import { Btn, Card, ExtLink, Label } from "../ui";
+import { Badge, Btn, Card, ExtLink, Label } from "../ui";
 
 export function TreasuryPanel({log, agentCapital}: any) {
   const [viewportWidth, setViewportWidth] = useState(
@@ -87,7 +87,39 @@ export function TreasuryPanel({log, agentCapital}: any) {
             <span style={{fontSize:11, color:LOG_COL[e.type], ...mono, fontWeight:700}}>{e.type}</span>
             {!isMobile && <span style={{fontSize:12, color:C.text, ...mono}}>{e.fee} KAS</span>}
             {!isMobile && <span style={{fontSize:11, color:C.warn, ...mono}}>{(e.fee*TREASURY_SPLIT).toFixed(4)} → tsy</span>}
-            <span style={{fontSize:11, color:C.dim, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{e.msg}</span>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:11, color:C.dim, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{e.msg}</div>
+              {(e?.truthLabel || e?.receiptProvenance) && (
+                <div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:4}}>
+                  {e?.truthLabel && (
+                    <Badge
+                      text={String(e.truthLabel)}
+                      color={
+                        String(e.truthLabel).includes("CHAIN CONFIRMED")
+                          ? C.ok
+                          : String(e.truthLabel).includes("BACKEND CONFIRMED")
+                            ? C.purple
+                            : String(e.truthLabel).includes("BROADCASTED")
+                              ? C.accent
+                              : C.warn
+                      }
+                    />
+                  )}
+                  {e?.receiptProvenance && (
+                    <Badge
+                      text={String(e.receiptProvenance)}
+                      color={
+                        String(e.receiptProvenance).toUpperCase() === "CHAIN"
+                          ? C.ok
+                          : String(e.receiptProvenance).toUpperCase() === "BACKEND"
+                            ? C.purple
+                            : C.warn
+                      }
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         ))}
       </Card>

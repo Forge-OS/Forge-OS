@@ -38,6 +38,26 @@ export type QueueTxItem = {
   receipt_fee_kas?: number;
   receipt_mass?: number;
   receipt_source_path?: string;
+  receipt_source?: string;
+  receipt_imported_from?: "kaspa_api" | "callback_consumer";
+  receipt_backend_updated_at?: number;
+  receipt_slippage_kas?: number;
+  backend_confirm_ts?: number;
+  backend_confirmations?: number;
+  backend_receipt_fee_kas?: number;
+  backend_receipt_fee_sompi?: number;
+  backend_receipt_slippage_kas?: number;
+  chain_confirm_ts?: number;
+  chain_confirmations?: number;
+  chain_receipt_fee_kas?: number;
+  chain_receipt_fee_sompi?: number;
+  chain_derived_slippage_kas?: number;
+  receipt_consistency_status?: "insufficient" | "consistent" | "mismatch";
+  receipt_consistency_mismatches?: string[];
+  receipt_consistency_checked_ts?: number;
+  receipt_consistency_confirm_ts_drift_ms?: number;
+  receipt_consistency_fee_diff_kas?: number;
+  receipt_consistency_slippage_diff_kas?: number;
   metaKind?: "treasury_fee" | "action" | "deploy";
   [key: string]: any;
 };
@@ -136,6 +156,70 @@ export function validateQueueTxItem(input: any): QueueTxItem {
       Number.isFinite(finite(input?.receipt_mass, NaN)) ? Math.max(0, Math.round(finite(input?.receipt_mass, 0))) : undefined,
     receipt_source_path:
       input?.receipt_source_path ? String(input.receipt_source_path).slice(0, 240) : undefined,
+    receipt_source:
+      input?.receipt_source ? String(input.receipt_source).slice(0, 120) : undefined,
+    receipt_imported_from:
+      input?.receipt_imported_from === "callback_consumer" || input?.receipt_imported_from === "kaspa_api"
+        ? input.receipt_imported_from
+        : undefined,
+    receipt_backend_updated_at:
+      finite(input?.receipt_backend_updated_at, NaN) > 0 ? Math.round(finite(input?.receipt_backend_updated_at, 0)) : undefined,
+    receipt_slippage_kas:
+      Number.isFinite(finite(input?.receipt_slippage_kas, NaN))
+        ? Math.max(0, Number(finite(input?.receipt_slippage_kas, 0).toFixed(8)))
+        : undefined,
+    backend_confirm_ts:
+      finite(input?.backend_confirm_ts, NaN) > 0 ? Math.round(finite(input?.backend_confirm_ts, 0)) : undefined,
+    backend_confirmations:
+      Number.isFinite(finite(input?.backend_confirmations, NaN)) ? Math.max(0, Math.round(finite(input?.backend_confirmations, 0))) : undefined,
+    backend_receipt_fee_kas:
+      Number.isFinite(finite(input?.backend_receipt_fee_kas, NaN))
+        ? Math.max(0, Number(finite(input?.backend_receipt_fee_kas, 0).toFixed(8)))
+        : undefined,
+    backend_receipt_fee_sompi:
+      Number.isFinite(finite(input?.backend_receipt_fee_sompi, NaN)) ? Math.max(0, Math.round(finite(input?.backend_receipt_fee_sompi, 0))) : undefined,
+    backend_receipt_slippage_kas:
+      Number.isFinite(finite(input?.backend_receipt_slippage_kas, NaN))
+        ? Math.max(0, Number(finite(input?.backend_receipt_slippage_kas, 0).toFixed(8)))
+        : undefined,
+    chain_confirm_ts:
+      finite(input?.chain_confirm_ts, NaN) > 0 ? Math.round(finite(input?.chain_confirm_ts, 0)) : undefined,
+    chain_confirmations:
+      Number.isFinite(finite(input?.chain_confirmations, NaN)) ? Math.max(0, Math.round(finite(input?.chain_confirmations, 0))) : undefined,
+    chain_receipt_fee_kas:
+      Number.isFinite(finite(input?.chain_receipt_fee_kas, NaN))
+        ? Math.max(0, Number(finite(input?.chain_receipt_fee_kas, 0).toFixed(8)))
+        : undefined,
+    chain_receipt_fee_sompi:
+      Number.isFinite(finite(input?.chain_receipt_fee_sompi, NaN)) ? Math.max(0, Math.round(finite(input?.chain_receipt_fee_sompi, 0))) : undefined,
+    chain_derived_slippage_kas:
+      Number.isFinite(finite(input?.chain_derived_slippage_kas, NaN))
+        ? Math.max(0, Number(finite(input?.chain_derived_slippage_kas, 0).toFixed(8)))
+        : undefined,
+    receipt_consistency_status:
+      input?.receipt_consistency_status === "consistent" ||
+      input?.receipt_consistency_status === "mismatch" ||
+      input?.receipt_consistency_status === "insufficient"
+        ? input.receipt_consistency_status
+        : undefined,
+    receipt_consistency_mismatches:
+      Array.isArray(input?.receipt_consistency_mismatches)
+        ? input.receipt_consistency_mismatches.map((v: any) => String(v)).filter(Boolean).slice(0, 8)
+        : undefined,
+    receipt_consistency_checked_ts:
+      finite(input?.receipt_consistency_checked_ts, NaN) > 0 ? Math.round(finite(input?.receipt_consistency_checked_ts, 0)) : undefined,
+    receipt_consistency_confirm_ts_drift_ms:
+      Number.isFinite(finite(input?.receipt_consistency_confirm_ts_drift_ms, NaN))
+        ? Math.max(0, Math.round(finite(input?.receipt_consistency_confirm_ts_drift_ms, 0)))
+        : undefined,
+    receipt_consistency_fee_diff_kas:
+      Number.isFinite(finite(input?.receipt_consistency_fee_diff_kas, NaN))
+        ? Math.max(0, Number(finite(input?.receipt_consistency_fee_diff_kas, 0).toFixed(8)))
+        : undefined,
+    receipt_consistency_slippage_diff_kas:
+      Number.isFinite(finite(input?.receipt_consistency_slippage_diff_kas, NaN))
+        ? Math.max(0, Number(finite(input?.receipt_consistency_slippage_diff_kas, 0).toFixed(8)))
+        : undefined,
     metaKind: input?.metaKind === "treasury_fee" ? "treasury_fee" : input?.metaKind === "deploy" ? "deploy" : "action",
   };
 }

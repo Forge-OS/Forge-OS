@@ -65,6 +65,28 @@ npm run build
 npm run preview
 ```
 
+## Pipeline Load Test (Scheduler + Callback Consumer + Tx Builder)
+```bash
+npm run load:pipeline
+```
+
+Optional tuning knobs:
+```bash
+LOAD_PIPELINE_AGENTS=24 LOAD_PIPELINE_TICKS=24 LOAD_PIPELINE_RECEIPTS=80 LOAD_PIPELINE_TX_BUILDS=40 LOAD_PIPELINE_CONCURRENCY=8 npm run load:pipeline
+```
+
+Optional Redis-backed path exercise (Lua queue/idempotency paths):
+```bash
+LOAD_PIPELINE_SCHEDULER_REDIS_URL=redis://127.0.0.1:6379 LOAD_PIPELINE_CALLBACK_REDIS_URL=redis://127.0.0.1:6379 npm run load:pipeline
+```
+
+Optional threshold assertions (fail harness on latency/error regressions):
+```bash
+LOAD_PIPELINE_MAX_TOTAL_ERRORS=0 LOAD_PIPELINE_MAX_ERROR_RATE_PCT=1 LOAD_PIPELINE_MAX_P95_SCHEDULER_TICK_MS=750 LOAD_PIPELINE_MAX_P95_RECEIPT_POST_MS=250 LOAD_PIPELINE_MAX_P95_TX_BUILDER_MS=2500 npm run load:pipeline
+```
+
+Nightly CI load profile uses the same harness with Redis enabled (see `.github/workflows/nightly-load.yml`).
+
 ## Domain Validation
 ```bash
 npm run domain:check
@@ -127,8 +149,29 @@ Kaspa network:
 - `SCHEDULER_LEADER_LOCK_RENEW_JITTER_MS`, `SCHEDULER_LEADER_ACQUIRE_BACKOFF_MIN_MS`, `SCHEDULER_LEADER_ACQUIRE_BACKOFF_MAX_MS` (leader fencing lock behavior)
 - `VITE_KASTLE_TX_BUILDER_URL` / `VITE_KASTLE_TX_BUILDER_TOKEN` / `VITE_KASTLE_TX_BUILDER_TIMEOUT_MS` (automatic Kastle txJson builder endpoint)
 - `VITE_KASTLE_TX_BUILDER_STRICT` (fail instead of fallback on builder error)
+- `VITE_EXECUTION_RECEIPT_IMPORT_ENABLED` / `VITE_EXECUTION_RECEIPT_API_URL` / `VITE_EXECUTION_RECEIPT_API_TOKEN` / `VITE_EXECUTION_RECEIPT_API_TIMEOUT_MS` (backend receipt import for UI queue + attribution)
+- `VITE_EXECUTION_RECEIPT_SSE_ENABLED` / `VITE_EXECUTION_RECEIPT_SSE_URL` / `VITE_EXECUTION_RECEIPT_SSE_REPLAY` / `VITE_EXECUTION_RECEIPT_SSE_REPLAY_LIMIT` (backend receipt SSE import path)
+- `VITE_PNL_REALIZED_MIN_CONFIRMATIONS` (minimum confirmations before counting execution as realized in PnL)
+- `VITE_PNL_REALIZED_CONFIRMATION_POLICY_JSON` (tiered confirmation floor policy by action/risk/amount for realized PnL accounting)
+- `VITE_RECEIPT_CONSISTENCY_DEGRADE_*` (downgrade realized attribution / optionally block auto-approve when backend-vs-chain receipt mismatch rate is high)
+- `VITE_CALIBRATION_*` guardrail vars (calibration-based ACCUMULATE sizing reduction + auto-approve disable thresholds)
+- `VITE_DECISION_AUDIT_SIGNER_URL` / `VITE_DECISION_AUDIT_SIGNER_TOKEN` / `VITE_DECISION_AUDIT_SIGNER_TIMEOUT_MS` / `VITE_DECISION_AUDIT_SIGNER_REQUIRED` (server-side cryptographic audit signing)
+- `VITE_DECISION_AUDIT_SIGNER_PUBLIC_KEY_URL` / `VITE_DECISION_AUDIT_SIGNER_PUBLIC_KEY_CACHE_TTL_MS` / `VITE_DECISION_AUDIT_SIGNER_PINNED_FINGERPRINTS` / `VITE_DECISION_AUDIT_SIGNER_REQUIRE_PINNED` (UI-side signature verification + key pinning for decision audit records)
+- `TX_BUILDER_LOCAL_WASM_ENABLED`, `TX_BUILDER_LOCAL_WASM_JSON_KIND`, `TX_BUILDER_KAS_API_MAINNET`, `TX_BUILDER_KAS_API_TESTNET` (local tx-builder mode)
+- `TX_BUILDER_LOCAL_WASM_COIN_SELECTION`, `TX_BUILDER_LOCAL_WASM_MAX_INPUTS`, `TX_BUILDER_LOCAL_WASM_ESTIMATED_NETWORK_FEE_SOMPI`, `TX_BUILDER_LOCAL_WASM_PER_INPUT_FEE_BUFFER_SOMPI`, `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_MODE`, `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_*` (local fee/coin-selection policy)
 - `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_URL` / `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_TOKEN` (bundled `TX_BUILDER_COMMAND` HTTP bridge helper)
 - `CALLBACK_CONSUMER_*` (reference downstream callback consumer + receipt ingestion starter)
+- `AUDIT_SIGNER_*` (reference decision audit signer service; local-key or HSM/KMS command mode, optional hash-chained append-only JSONL audit export via `AUDIT_SIGNER_APPEND_LOG_PATH`)
+
+Audit log verification:
+```bash
+npm run audit-log:verify -- --file ./forgeos-audit.jsonl --strict-signatures
+```
+
+Load harness / SLO tuning:
+- `LOAD_PIPELINE_SCHEDULER_INSTANCES` (set `2` with Redis URLs to exercise multi-instance leader/fencing behavior)
+- `LOAD_PIPELINE_MAX_CALLBACK_DUPLICATE_EVENTS` / `LOAD_PIPELINE_MAX_CALLBACK_STALE_FENCE_EVENTS` (multi-instance callback safety SLOs)
+- `CALIBRATION_SLO_MAX_BRIER`, `CALIBRATION_SLO_MAX_EV_CAL_ERROR_PCT`, `CALIBRATION_SLO_MIN_REGIME_HIT_RATE_PCT`, `CALIBRATION_SLO_MIN_REGIME_HIT_SAMPLES` (replay calibration regression SLO test thresholds)
 
 AI engine:
 - `VITE_AI_API_URL` (default: Anthropic Messages API)
@@ -194,7 +237,7 @@ Runtime override:
 - `sendKaspa(toAddress, sompi)`
 - Kastle raw multi-output path (feature-flagged):
 - `signAndBroadcastTx(networkId, txJson)` via adapter capability detection
-- txJson comes from an injected builder bridge (`window.__FORGEOS_KASTLE_BUILD_TX_JSON__`) or manual operator paste prompt
+- txJson can come from `VITE_KASTLE_TX_BUILDER_URL` (recommended), an injected builder bridge (`window.__FORGEOS_KASTLE_BUILD_TX_JSON__`), or manual operator paste prompt
 - Ghost Wallet send path:
 - provider `transact(outputs, fee?, inputs?)` bridge call (Forge.OS uses multi-output when treasury-combined send is supported/eligible)
 - Tangem / OneKey send path:
@@ -245,6 +288,7 @@ Recommendation for production:
 - Scheduler shared-cache + auth/JWT/JWKS/quotas/Redis-authoritative (due + execution queue) starter example: `server/scheduler/index.mjs`
 - Kastle tx-builder starter example: `server/tx-builder/index.mjs`
 - Callback consumer reference service (fence/idempotency + execution receipt ingestion): `server/callback-consumer/index.mjs`
+- Audit signer reference service (cryptographic decision-audit signatures): `server/audit-signer/index.mjs`
 - Keep decision sanitization enabled (default) and enforce wallet-side signing.
 - For maximum AI involvement use `VITE_AI_OVERLAY_MODE=always`; for scale/cost control use `adaptive`.
 - For strict real-AI-only operation, also set `VITE_AI_FALLBACK_ENABLED=false` (engine will error if AI transport is unavailable).

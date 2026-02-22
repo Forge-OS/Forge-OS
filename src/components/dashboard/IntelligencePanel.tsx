@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { C, mono } from "../../tokens";
 import { fmtT } from "../../helpers";
+import { decisionAuditVerifyCacheKey, type AuditCryptoVerificationResult, verifyDecisionAuditCryptoSignature } from "../../runtime/auditCryptoVerify";
 import { Badge, Btn, Card, Label } from "../ui";
 
-export function IntelligencePanel({decisions, loading, onRun}: any) {
+export function IntelligencePanel({decisions, queue = [], loading, onRun}: any) {
   const [viewportWidth, setViewportWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1200
   );
@@ -15,7 +16,59 @@ export function IntelligencePanel({decisions, loading, onRun}: any) {
   }, []);
   const isMobile = viewportWidth < 760;
   const metricsCols = isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)";
-  const historyCols = isMobile ? "78px 108px 1fr" : "90px 120px 80px 80px 1fr";
+  const historyCols = isMobile ? "78px 108px 1fr" : "90px 200px 96px 88px 1fr";
+  const queueItems = Array.isArray(queue) ? queue : [];
+  const [auditVerifyByDecisionHash, setAuditVerifyByDecisionHash] = useState<Record<string, { cacheKey: string; result: AuditCryptoVerificationResult }>>({});
+  const verifyInFlight = useRef(new Set<string>());
+
+  const decisionToQueue = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const item of queueItems) {
+      if (!item || item?.metaKind === "treasury_fee") continue;
+      const hash = String(item?.dec?.audit_record?.decision_hash || "").trim();
+      if (!hash) continue;
+      const prev = map.get(hash);
+      if (!prev || Number(item?.ts || 0) > Number(prev?.ts || 0)) map.set(hash, item);
+    }
+    return map;
+  }, [queueItems]);
+
+  const queueItemForDecision = (entry: any) => {
+    if (!entry?.dec) return null;
+    const hash = String(entry?.dec?.audit_record?.decision_hash || "").trim();
+    if (hash && decisionToQueue.has(hash)) return decisionToQueue.get(hash);
+    const byRef = queueItems
+      .filter((item: any) => item?.metaKind !== "treasury_fee" && item?.dec === entry.dec)
+      .sort((a: any, b: any) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    return byRef[0] || null;
+  };
+
+  const classifyProvenance = (item: any) => {
+    if (!item) return { text: "ESTIMATED", color: C.warn };
+    const imported = String(item?.receipt_imported_from || "").toLowerCase();
+    const sourcePath = String(item?.receipt_source_path || "").toLowerCase();
+    const confirmSource = String(item?.confirm_ts_source || "").toLowerCase();
+    if (imported === "callback_consumer" || sourcePath.includes("callback-consumer")) return { text: "BACKEND", color: C.purple };
+    if (imported === "kaspa_api" || confirmSource === "chain") return { text: "CHAIN", color: C.ok };
+    return { text: "ESTIMATED", color: C.warn };
+  };
+
+  const truthLabelForDecision = (entry: any) => {
+    const item = queueItemForDecision(entry);
+    const provenance = classifyProvenance(item);
+    if (!item) return { text: "SIMULATED", color: C.dim, provenance: { text: "ESTIMATED", color: C.warn } };
+    if (String(item?.status || "") !== "signed") return { text: "ESTIMATED", color: C.warn, provenance };
+    const receiptState = String(item?.receipt_lifecycle || "submitted");
+    if (receiptState === "confirmed") {
+      if (provenance.text === "BACKEND") return { text: "BACKEND CONFIRMED", color: C.purple, provenance };
+      if (provenance.text === "CHAIN") return { text: "CHAIN CONFIRMED", color: C.ok, provenance };
+      return { text: "ESTIMATED", color: C.warn, provenance };
+    }
+    if (receiptState === "broadcasted" || receiptState === "pending_confirm" || receiptState === "submitted") {
+      return { text: "BROADCASTED", color: C.warn, provenance };
+    }
+    return { text: "ESTIMATED", color: C.warn, provenance };
+  };
 
   const latest = decisions[0];
   const dec = latest?.dec;
@@ -27,6 +80,11 @@ export function IntelligencePanel({decisions, loading, onRun}: any) {
     source === "fallback" ? C.warn :
     C.ok;
   const quant = dec?.quant_metrics || null;
+  const latestTruth = latest ? truthLabelForDecision(latest) : null;
+  const cryptoSig = dec?.audit_record?.crypto_signature || null;
+  const latestAuditVerify = latest?.dec?.audit_record?.decision_hash
+    ? auditVerifyByDecisionHash[String(latest.dec.audit_record.decision_hash)]?.result || null
+    : null;
   const formatMetric = (value: any) => {
     if (value == null || value === "") return "—";
     if (typeof value === "number") {
@@ -36,6 +94,61 @@ export function IntelligencePanel({decisions, loading, onRun}: any) {
     }
     if (typeof value === "boolean") return value ? "yes" : "no";
     return String(value);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const candidates = (Array.isArray(decisions) ? decisions : []).slice(0, 24);
+    for (const entry of candidates) {
+      const audit = entry?.dec?.audit_record;
+      const hash = String(audit?.decision_hash || "").trim();
+      if (!hash) continue;
+      if (String(audit?.crypto_signature?.status || "").toLowerCase() !== "signed") continue;
+      const cacheKey = decisionAuditVerifyCacheKey(entry.dec);
+      if (!cacheKey) continue;
+      const existing = auditVerifyByDecisionHash[hash];
+      if (existing?.cacheKey === cacheKey) continue;
+      if (verifyInFlight.current.has(cacheKey)) continue;
+      verifyInFlight.current.add(cacheKey);
+      void verifyDecisionAuditCryptoSignature(entry.dec)
+        .then((result) => {
+          if (cancelled) return;
+          setAuditVerifyByDecisionHash((prev) => {
+            const current = prev[hash];
+            if (current?.cacheKey === cacheKey) return prev;
+            return { ...prev, [hash]: { cacheKey, result } };
+          });
+        })
+        .finally(() => {
+          verifyInFlight.current.delete(cacheKey);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [auditVerifyByDecisionHash, decisions]);
+
+  const cryptoVerifyBadge = (verify: AuditCryptoVerificationResult | null) => {
+    if (!verify) return <Badge text="CRYPTO VERIFY…" color={C.dim}/>;
+    if (verify.status === "verified") return <Badge text="CRYPTO VERIFIED" color={C.ok}/>;
+    if (verify.status === "unpinned") return <Badge text="UNPINNED KEY" color={C.warn}/>;
+    if (verify.status === "invalid") return <Badge text="CRYPTO INVALID" color={C.danger}/>;
+    if (verify.status === "unsupported") return <Badge text="VERIFY UNSUPPORTED" color={C.dim}/>;
+    if (verify.status === "error") return <Badge text="VERIFY ERROR" color={C.warn}/>;
+    return <Badge text="VERIFY UNKNOWN" color={C.dim}/>;
+  };
+
+  const cryptoVerifyDetail = (verify: AuditCryptoVerificationResult | null) => {
+    if (!verify) return "crypto verify pending";
+    const bits = [
+      `verify ${String(verify.status || "unknown")}`,
+      verify.alg ? String(verify.alg) : "",
+      verify.keyFingerprint ? `fp ${String(verify.keyFingerprint).slice(0, 26)}` : "",
+      verify.pinMatched === true ? "pinned" : verify.pinMatched === false ? "unpinned" : "",
+      verify.source ? `src ${verify.source}` : "",
+    ].filter(Boolean);
+    if (verify.detail) bits.push(String(verify.detail).slice(0, 80));
+    return bits.join(" · ");
   };
 
   return(
@@ -71,7 +184,15 @@ export function IntelligencePanel({decisions, loading, onRun}: any) {
                 <Badge text={dec.action} color={ac}/>
                 <Badge text={dec.strategy_phase} color={C.purple}/>
                 <Badge text={`SOURCE ${source.toUpperCase()}`} color={sourceColor}/>
+                {latestTruth && <Badge text={`TRUTH ${latestTruth.text}`} color={latestTruth.color}/>}
+                {latestTruth && <Badge text={`PROV ${latestTruth.provenance.text}`} color={latestTruth.provenance.color}/>}
                 {quant?.regime && <Badge text={`REGIME ${String(quant.regime).replace(/_/g, " ")}`} color={C.accent}/>}
+                {dec?.audit_record?.audit_sig && <Badge text="AUDIT READY" color={C.text}/>}
+                {cryptoSig?.status === "signed" && <Badge text="CRYPTO SIGNED" color={C.ok}/>}
+                {cryptoSig?.status === "signed" && cryptoVerifyBadge(latestAuditVerify)}
+                {latestAuditVerify?.pinMatched === true && <Badge text="KEY PINNED" color={C.accent}/>}
+                {latestAuditVerify?.pinMatched === false && <Badge text="KEY UNPINNED" color={C.warn}/>}
+                {cryptoSig?.status === "error" && <Badge text="CRYPTO SIGN ERR" color={C.warn}/>}
                 <span style={{fontSize:11, color:C.dim, ...mono}}>{fmtT(latest.ts)}</span>
               </div>
               <div style={{display:"flex", gap:8}}>
@@ -107,6 +228,24 @@ export function IntelligencePanel({decisions, loading, onRun}: any) {
               <div style={{fontSize:13, color:C.text, lineHeight:1.5}}>{dec.rationale}</div>
               {dec.decision_source_detail && (
                 <div style={{fontSize:11, color:C.dim, marginTop:8, ...mono}}>source detail: {dec.decision_source_detail}</div>
+              )}
+              {dec.audit_record && (
+                <div style={{fontSize:11, color:C.dim, marginTop:8, ...mono, lineHeight:1.5}}>
+                  <div>
+                    audit: {String(dec.audit_record.audit_record_version || "—")} · prompt {String(dec.audit_record.prompt_version || "—")} · schema {String(dec.audit_record.ai_response_schema_version || "—")}
+                  </div>
+                  <div>
+                    qhash {String(dec.audit_record.quant_feature_snapshot_hash || "—").slice(0, 22)}… · dhash {String(dec.audit_record.decision_hash || "—").slice(0, 22)}… · sig {String(dec.audit_record.audit_sig || "—").slice(0, 18)}…
+                  </div>
+                  {dec.audit_record.crypto_signature && (
+                    <div>
+                      crypto {String(dec.audit_record.crypto_signature.status || "unknown")} · {String(dec.audit_record.crypto_signature.alg || "—")} · key {String(dec.audit_record.crypto_signature.key_id || "—").slice(0, 22)}
+                    </div>
+                  )}
+                  {dec.audit_record.crypto_signature?.status === "signed" && (
+                    <div>{cryptoVerifyDetail(latestAuditVerify)}</div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -170,6 +309,10 @@ export function IntelligencePanel({decisions, loading, onRun}: any) {
               </div>
               {decisions.slice(1).map((d: any, i: number)=>{
                 const c = d.dec.action==="ACCUMULATE"?C.ok:d.dec.action==="REDUCE"?C.danger:C.warn;
+                const truth = truthLabelForDecision(d);
+                const verify = d?.dec?.audit_record?.decision_hash
+                  ? auditVerifyByDecisionHash[String(d.dec.audit_record.decision_hash)]?.result || null
+                  : null;
                 const historySource = String(d?.dec?.decision_source || d?.source || "ai");
                 const historySourceLabel =
                   historySource === "hybrid-ai" ? "HYB" :
@@ -184,13 +327,40 @@ export function IntelligencePanel({decisions, loading, onRun}: any) {
                 return(
                   <div key={i} style={{display:"grid", gridTemplateColumns:historyCols, gap:10, padding:"9px 16px", borderBottom:`1px solid ${C.border}`, alignItems:"center"}}>
                     <span style={{fontSize:11, color:C.dim, ...mono}}>{fmtT(d.ts)}</span>
-                    <div style={{display:"flex", gap:6, alignItems:"center"}}>
+                    <div style={{display:"flex", gap:6, alignItems:"center", flexWrap:"wrap"}}>
                       <Badge text={d.dec.action} color={c}/>
                       {!isMobile && <Badge text={historySourceLabel} color={historySourceColor}/>}
+                      {!isMobile && <Badge text={truth.text} color={truth.color}/>}
+                      {!isMobile && <Badge text={truth.provenance.text} color={truth.provenance.color}/>}
+                      {!isMobile && d?.dec?.audit_record?.crypto_signature?.status === "signed" && verify && (
+                        <Badge
+                          text={
+                            verify.status === "verified"
+                              ? "SIG✓"
+                              : verify.status === "unpinned"
+                                ? "SIG⚠"
+                                : verify.status === "invalid"
+                                  ? "SIG✗"
+                                  : "SIG?"
+                          }
+                          color={
+                            verify.status === "verified"
+                              ? C.ok
+                              : verify.status === "unpinned"
+                                ? C.warn
+                                : verify.status === "invalid"
+                                  ? C.danger
+                                  : C.dim
+                          }
+                        />
+                      )}
                     </div>
                     {!isMobile && <span style={{fontSize:12, color:C.text, ...mono}}>{d.dec.capital_allocation_kas} KAS</span>}
                     {!isMobile && <span style={{fontSize:12, color:d.dec.confidence_score>=0.8?C.ok:C.warn, ...mono}}>c:{d.dec.confidence_score}</span>}
-                    <span style={{fontSize:11, color:C.dim, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{d.dec.rationale}</span>
+                    <span style={{fontSize:11, color:C.dim, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                      {d.dec.rationale}
+                      {d?.dec?.audit_record?.decision_hash ? ` · ${String(d.dec.audit_record.decision_hash).slice(0, 12)}` : ""}
+                    </span>
                   </div>
                 );
               })}

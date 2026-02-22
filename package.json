@@ -19,19 +19,25 @@
     "lint": "node scripts/lint-basic.mjs",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:scheduler:redis": "vitest run tests/server/scheduler*.redis.integration.test.ts",
     "test:perf": "vitest run tests/perf --reporter=verbose",
+    "load:pipeline": "node scripts/load-pipeline.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "ai:proxy": "node server/ai-proxy/index.mjs",
     "scheduler:start": "node server/scheduler/index.mjs",
     "tx-builder:start": "node server/tx-builder/index.mjs",
-    "callback-consumer:start": "node server/callback-consumer/index.mjs"
+    "callback-consumer:start": "node server/callback-consumer/index.mjs",
+    "audit-signer:start": "node server/audit-signer/index.mjs",
+    "audit-log:verify": "node scripts/verify-audit-log.mjs"
   },
   "dependencies": {
+    "isomorphic-ws": "^5.0.0",
+    "kaspa-wasm": "^0.13.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "redis": "^4.7.1",
-    "recharts": "^2.12.7"
+    "recharts": "^2.12.7",
+    "redis": "^4.7.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.51.1",

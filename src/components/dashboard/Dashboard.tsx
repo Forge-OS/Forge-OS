@@ -19,19 +19,24 @@ import {
   TREASURY,
   TREASURY_FEE_KAS,
   TREASURY_FEE_ONCHAIN_ENABLED,
+  PNL_REALIZED_CONFIRMATION_POLICY,
+  PNL_REALIZED_MIN_CONFIRMATIONS,
 } from "../../constants";
 import { fmtT, shortAddr, uid } from "../../helpers";
 import { runQuantEngineClient, getQuantEngineClientMode } from "../../quant/runQuantEngineClient";
 import { LOG_COL, seedLog } from "../../log/seedLog";
 import { C, mono } from "../../tokens";
 import { consumeUsageCycle, getUsageState } from "../../runtime/usageQuota";
-import { readPersistedDashboardState, writePersistedDashboardState } from "../../runtime/persistentState";
 import { derivePnlAttribution } from "../../analytics/pnlAttribution";
 import { formatForgeError, normalizeError } from "../../runtime/errorTaxonomy";
 import { buildQueueTxItem } from "../../tx/queueTx";
 import { WalletAdapter } from "../../wallet/WalletAdapter";
 import { useAgentLifecycle } from "./hooks/useAgentLifecycle";
+import { useAutoCycleLoop } from "./hooks/useAutoCycleLoop";
 import { useAlerts } from "./hooks/useAlerts";
+import { useDashboardRuntimePersistence } from "./hooks/useDashboardRuntimePersistence";
+import { useDashboardUiSummary } from "./hooks/useDashboardUiSummary";
+import { useExecutionGuardrailsPolicy } from "./hooks/useExecutionGuardrailsPolicy";
 import { useExecutionQueue } from "./hooks/useExecutionQueue";
 import { useKaspaFeed } from "./hooks/useKaspaFeed";
 import { usePortfolioAllocator } from "./hooks/usePortfolioAllocator";
@@ -41,6 +46,8 @@ import { Badge, Btn, Card, ExtLink, Label } from "../ui";
 import { EXEC_OPTS } from "../wizard/constants";
 import { ActionQueue } from "./ActionQueue";
 import { BillingPanel } from "./BillingPanel";
+import { DashboardMissionControlBadges } from "./DashboardMissionControlBadges";
+import { DashboardRuntimeNotices } from "./DashboardRuntimeNotices";
 import { WalletPanel } from "./WalletPanel";
 
 const PerfChart = lazy(() => import("./PerfChart").then((m) => ({ default: m.PerfChart })));
@@ -112,6 +119,22 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     (e: any) => setLog((p: any) => [{ ts: Date.now(), ...e }, ...p].slice(0, MAX_LOG_ENTRIES)),
     [MAX_LOG_ENTRIES]
   );
+  const activeStrategyLabel = String(agent?.strategyLabel || agent?.strategyTemplate || "Custom");
+  const {
+    alertConfig,
+    alertSaveBusy,
+    lastAlertResult,
+    sendAlertEvent,
+    patchAlertConfig,
+    toggleAlertType,
+    saveAlertConfig,
+    sendTestAlert,
+  } = useAlerts({
+    alertScope,
+    agentName: agent?.name,
+    agentId: agent?.agentId,
+    activeStrategyLabel,
+  });
   const {
     queue,
     setQueue,
@@ -126,6 +149,7 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     handleSigningReject,
     handleSigned: handleSignedBase,
     rejectAllPending,
+    receiptConsistencyMetrics,
   } = useExecutionQueue({
     wallet,
     maxQueueEntries: MAX_QUEUE_ENTRIES,
@@ -138,6 +162,9 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     receiptMaxAttempts: RECEIPT_MAX_ATTEMPTS,
     receiptPollIntervalMs: RECEIPT_POLL_INTERVAL_MS,
     receiptPollBatchSize: RECEIPT_POLL_BATCH_SIZE,
+    sendAlertEvent,
+    agentName: agent?.name,
+    agentId: agent?.agentId,
   });
 
   const { settleTreasuryFeePayout, attachCombinedTreasuryOutput } = useTreasuryPayout({
@@ -158,65 +185,34 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     setUsage(getUsageState(FREE_CYCLES_PER_DAY, usageScope));
   }, [usageScope]);
 
-  useEffect(() => {
-    setRuntimeHydrated(false);
-    const persisted = readPersistedDashboardState(runtimeScope);
-
-    if (persisted) {
-      if (persisted.status) setStatus(persisted.status);
-      if (persisted.execMode && EXEC_OPTS.some((opt) => opt.v === persisted.execMode)) {
-        setExecMode(persisted.execMode);
-      } else {
-        setExecMode(agent.execMode || "manual");
-      }
-      if (typeof persisted.liveExecutionArmed === "boolean") {
-        setLiveExecutionArmed(persisted.liveExecutionArmed);
-      } else {
-        setLiveExecutionArmed(LIVE_EXECUTION_DEFAULT);
-      }
-      setQueue(Array.isArray(persisted.queue) ? persisted.queue.slice(0, MAX_QUEUE_ENTRIES) : []);
-      setLog(
-        Array.isArray(persisted.log) && persisted.log.length > 0
-          ? persisted.log.slice(0, MAX_LOG_ENTRIES)
-          : seedLog(agent.name)
-      );
-      setDecisions(Array.isArray(persisted.decisions) ? persisted.decisions.slice(0, MAX_DECISION_ENTRIES) : []);
-      setMarketHistory(Array.isArray((persisted as any).marketHistory) ? (persisted as any).marketHistory.slice(-MAX_MARKET_SNAPSHOTS) : []);
-      setNextAutoCycleAt(
-        Number.isFinite(persisted.nextAutoCycleAt)
-          ? Math.max(Date.now() + 1000, Number(persisted.nextAutoCycleAt))
-          : Date.now() + cycleIntervalMs
-      );
-    } else {
-      setStatus("RUNNING");
-      setExecMode(agent.execMode || "manual");
-      setLiveExecutionArmed(LIVE_EXECUTION_DEFAULT);
-      setQueue([]);
-      setDecisions([]);
-      setMarketHistory([]);
-      setLog(seedLog(agent.name));
-      setNextAutoCycleAt(Date.now() + cycleIntervalMs);
-    }
-
-    setRuntimeHydrated(true);
-  }, [agent.execMode, agent.name, cycleIntervalMs, runtimeScope, MAX_DECISION_ENTRIES, MAX_LOG_ENTRIES, MAX_QUEUE_ENTRIES]);
-
-  useEffect(() => {
-    if (!runtimeHydrated) return;
-    const persistTimer = setTimeout(() => {
-      writePersistedDashboardState(runtimeScope, {
-        status: status as "RUNNING" | "PAUSED" | "SUSPENDED",
-        execMode: execMode as "autonomous" | "manual" | "notify",
-        liveExecutionArmed,
-        queue,
-        log,
-        decisions,
-        marketHistory,
-        nextAutoCycleAt,
-      });
-    }, 250);
-    return () => clearTimeout(persistTimer);
-  }, [decisions, execMode, liveExecutionArmed, log, marketHistory, nextAutoCycleAt, queue, runtimeHydrated, runtimeScope, status]);
+  useDashboardRuntimePersistence({
+    agent,
+    cycleIntervalMs,
+    runtimeScope,
+    maxDecisionEntries: MAX_DECISION_ENTRIES,
+    maxLogEntries: MAX_LOG_ENTRIES,
+    maxQueueEntries: MAX_QUEUE_ENTRIES,
+    maxMarketSnapshots: MAX_MARKET_SNAPSHOTS,
+    runtimeHydrated,
+    setRuntimeHydrated,
+    status,
+    execMode,
+    liveExecutionArmed,
+    queue,
+    log,
+    decisions,
+    marketHistory,
+    nextAutoCycleAt,
+    setStatus,
+    setExecMode,
+    setLiveExecutionArmed,
+    setQueue,
+    setLog,
+    setDecisions,
+    setMarketHistory,
+    setNextAutoCycleAt,
+    liveExecutionDefault: LIVE_EXECUTION_DEFAULT,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -230,18 +226,6 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
       setNextAutoCycleAt(Date.now() + cycleIntervalMs);
     }
   }, [status, cycleIntervalMs]);
-
-  const isMobile = viewportWidth < 760;
-  const isTablet = viewportWidth < 1024;
-
-  const summaryGridCols = useMemo(() => {
-    if (isMobile) return "1fr";
-    if (isTablet) return "repeat(2,1fr)";
-    return "repeat(4,1fr)";
-  }, [isMobile, isTablet]);
-
-  const splitGridCols = isTablet ? "1fr" : "2fr 1fr";
-  const controlsGridCols = isTablet ? "1fr" : "1fr 1fr";
 
   const riskThresh = agent.risk==="low"?0.4:agent.risk==="medium"?0.65:0.85;
   const allAgents = useMemo(() => {
@@ -272,27 +256,39 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     activeQueue: queue,
   });
 
-  const pnlAttribution = useMemo(
-    () => derivePnlAttribution({ decisions, queue, log, marketHistory }),
+  const pnlAttributionBase = useMemo(
+    () =>
+      derivePnlAttribution({
+        decisions,
+        queue,
+        log,
+        marketHistory,
+        realizedMinConfirmations: PNL_REALIZED_MIN_CONFIRMATIONS,
+        confirmationDepthPolicy: PNL_REALIZED_CONFIRMATION_POLICY as any,
+      }),
     [decisions, queue, log, marketHistory]
   );
-
-  const activeStrategyLabel = String(agent?.strategyLabel || agent?.strategyTemplate || "Custom");
-  const {
-    alertConfig,
-    alertSaveBusy,
-    lastAlertResult,
-    sendAlertEvent,
-    patchAlertConfig,
-    toggleAlertType,
-    saveAlertConfig,
-    sendTestAlert,
-  } = useAlerts({
-    alertScope,
-    agentName: agent?.name,
-    agentId: agent?.agentId,
-    activeStrategyLabel,
+  const executionGuardrails = useExecutionGuardrailsPolicy({
+    pnlAttribution: pnlAttributionBase,
+    receiptConsistencyMetrics,
   });
+  const pnlAttribution = useMemo(() => {
+    const truth = executionGuardrails.truth;
+    const base = pnlAttributionBase as any;
+    const downgradedMode =
+      truth.degraded && String(base?.netPnlMode || "") === "realized"
+        ? "hybrid"
+        : base?.netPnlMode;
+    return {
+      ...base,
+      netPnlMode: downgradedMode,
+      truthDegraded: truth.degraded,
+      truthDegradedReason: truth.reasons?.[0] || "",
+      truthMismatchRatePct: truth.mismatchRatePct,
+      truthCheckedSignals: truth.checked,
+      truthMismatchSignals: truth.mismatches,
+    };
+  }, [executionGuardrails.truth, pnlAttributionBase]);
 
   const runCycle = useCallback(async()=>{
     if (cycleLockRef.current || status!=="RUNNING" || !runtimeHydrated) return;
@@ -360,6 +356,14 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
 
       const confOk = dec.confidence_score>=CONF_THRESHOLD;
       const riskOk = dec.risk_score<=riskThresh;
+      const calibrationSizeMultiplier = Math.max(
+        0,
+        Math.min(1, Number(executionGuardrails?.effectiveSizingMultiplier || 1))
+      );
+      const autoApproveGuardrailDisabled = Boolean(executionGuardrails?.autoApproveDisabled);
+      const autoApproveGuardrailReasons = Array.isArray(executionGuardrails?.autoApproveDisableReasons)
+        ? executionGuardrails.autoApproveDisableReasons
+        : [];
       const liveKas = Number(kasData?.walletKas || 0);
       const walletSupportsCombinedTreasury =
         TREASURY_FEE_ONCHAIN_ENABLED &&
@@ -410,19 +414,33 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
           });
         } else if(dec.action!=="HOLD"){
           const requested = Number(dec.capital_allocation_kas || 0);
-          const sharedCapKas = Number(activePortfolioRow?.cycleCapKas || 0);
-          const portfolioCapped =
-            dec.action === "ACCUMULATE" && sharedCapKas > 0 ? Math.min(requested, sharedCapKas) : requested;
-          const amountKas = dec.action === "ACCUMULATE" ? Math.min(portfolioCapped, availableToSpend) : requested;
-          if (dec.action === "ACCUMULATE" && sharedCapKas > 0 && requested > portfolioCapped) {
+          const calibrationScaledRequested =
+            dec.action === "ACCUMULATE"
+              ? Number((Math.max(0, requested) * calibrationSizeMultiplier).toFixed(6))
+              : requested;
+          if (dec.action === "ACCUMULATE" && calibrationScaledRequested < requested) {
             addLog({
               type:"SYSTEM",
-              msg:`Shared portfolio allocator capped ${agent.name} cycle from ${requested} to ${portfolioCapped.toFixed(4)} KAS.`,
+              msg:
+                `Calibration guardrail scaled execution from ${requested} to ${calibrationScaledRequested.toFixed(6)} KAS ` +
+                `(health ${Number(executionGuardrails?.calibration?.health || 1).toFixed(3)} · ` +
+                `tier ${String(executionGuardrails?.calibration?.tier || "healthy").toUpperCase()}).`,
               fee:null
             });
           }
-          if (requested > amountKas) {
-            addLog({type:"SYSTEM", msg:`Clamped execution amount from ${requested} to ${amountKas.toFixed(4)} KAS (available balance guardrail).`, fee:null});
+          const sharedCapKas = Number(activePortfolioRow?.cycleCapKas || 0);
+          const portfolioCapped =
+            dec.action === "ACCUMULATE" && sharedCapKas > 0 ? Math.min(calibrationScaledRequested, sharedCapKas) : calibrationScaledRequested;
+          const amountKas = dec.action === "ACCUMULATE" ? Math.min(portfolioCapped, availableToSpend) : calibrationScaledRequested;
+          if (dec.action === "ACCUMULATE" && sharedCapKas > 0 && calibrationScaledRequested > portfolioCapped) {
+            addLog({
+              type:"SYSTEM",
+              msg:`Shared portfolio allocator capped ${agent.name} cycle from ${calibrationScaledRequested} to ${portfolioCapped.toFixed(4)} KAS.`,
+              fee:null
+            });
+          }
+          if (calibrationScaledRequested > amountKas) {
+            addLog({type:"SYSTEM", msg:`Clamped execution amount from ${calibrationScaledRequested} to ${amountKas.toFixed(4)} KAS (available balance guardrail).`, fee:null});
           }
           if (!(amountKas > 0)) {
             addLog({type:"EXEC", msg:"HOLD — computed execution amount is zero", fee:0.03});
@@ -448,15 +466,29 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
               fee:null,
             });
           }
-          const isAutoApprove =
+          const autoApproveCandidate =
             execMode==="autonomous" &&
             txItem.amount_kas <= autoThresh &&
             (decSource === "ai" || decSource === "hybrid-ai");
+          const isAutoApprove = autoApproveCandidate && !autoApproveGuardrailDisabled;
+          if (autoApproveCandidate && !isAutoApprove) {
+            addLog({
+              type:"SIGN",
+              msg:`Auto-approve blocked by guardrail (${autoApproveGuardrailReasons.join(",") || "policy"}). Action routed to manual queue.`,
+              fee:null
+            });
+          }
           if(isAutoApprove){
             try {
               const txid = await sendWalletTransfer(txItem);
 
-              addLog({type:"EXEC", msg:`AUTO-APPROVED: ${dec.action} · ${txItem.amount_kas} KAS · txid: ${txid.slice(0,16)}...`, fee:0.08});
+              addLog({
+                type:"EXEC",
+                msg:`AUTO-APPROVED: ${dec.action} · ${txItem.amount_kas} KAS · txid: ${txid.slice(0,16)}...`,
+                fee:0.08,
+                truthLabel:"BROADCASTED",
+                receiptProvenance:"ESTIMATED",
+              });
               addLog({type:"TREASURY", msg:`Fee split → Pool: ${(FEE_RATE*AGENT_SPLIT).toFixed(4)} KAS / Treasury: ${(FEE_RATE*TREASURY_SPLIT).toFixed(4)} KAS`, fee:FEE_RATE});
               const signedItem = prependSignedBroadcastedQueueItem(txItem, txid);
               await settleTreasuryFeePayout(signedItem, "auto");
@@ -510,18 +542,18 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     wallet,
   ]);
 
-  useEffect(() => {
-    if (status !== "RUNNING" || !runtimeHydrated) return;
-    const tickId = setInterval(() => {
-      if (cycleLockRef.current) return;
-      if (loading) return;
-      if (!liveConnected || kasDataError) return;
-      if (Date.now() < nextAutoCycleAt) return;
-      setNextAutoCycleAt(Date.now() + cycleIntervalMs);
-      void runCycle();
-    }, 1000);
-    return () => clearInterval(tickId);
-  }, [status, loading, liveConnected, kasDataError, nextAutoCycleAt, cycleIntervalMs, runCycle, runtimeHydrated]);
+  useAutoCycleLoop({
+    status,
+    runtimeHydrated,
+    loading,
+    liveConnected,
+    kasDataError,
+    nextAutoCycleAt,
+    cycleIntervalMs,
+    cycleLockRef,
+    setNextAutoCycleAt,
+    runCycle,
+  });
 
   useEffect(() => {
     const latestRegime = String(decisions[0]?.dec?.quant_metrics?.regime || "");
@@ -575,22 +607,39 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     TREASURY_FEE_ONCHAIN_ENABLED && wallet?.provider !== "demo" && TREASURY_FEE_KAS > 0
       ? (walletSupportsCombinedTreasuryUi ? TREASURY_FEE_KAS : (TREASURY_FEE_KAS + NET_FEE))
       : 0;
-  const spendableKas = Math.max(0, liveKasNum - RESERVE - NET_FEE - treasuryPayoutReserveKasUi);
-  const liveExecutionReady = liveConnected && !kasDataError && wallet?.provider !== "demo";
-  const autoCycleCountdown = Math.max(0, Math.ceil((nextAutoCycleAt - Date.now()) / 1000));
-  const autoCycleCountdownLabel = `${Math.floor(autoCycleCountdown / 60)
-    .toString()
-    .padStart(2, "0")}:${(autoCycleCountdown % 60).toString().padStart(2, "0")}`;
-  const lastDecision = decisions[0]?.dec;
-  const lastDecisionSource = String(lastDecision?.decision_source || decisions[0]?.source || "ai");
-  const streamBadgeText = KAS_WS_URL
-    ? streamConnected
-      ? "STREAM LIVE"
-      : streamRetryCount > 0
-        ? `STREAM RETRY ${streamRetryCount}`
-        : "STREAM DOWN"
-    : "STREAM OFF";
-  const streamBadgeColor = KAS_WS_URL ? (streamConnected ? C.ok : C.warn) : C.dim;
+  const uiSummary = useDashboardUiSummary({
+    viewportWidth,
+    nextAutoCycleAt,
+    status,
+    totalFees,
+    queue,
+    decisions,
+    liveConnected,
+    kasDataError,
+    wallet,
+    kasData,
+    reserveKas: RESERVE,
+    netFeeKas: NET_FEE,
+    treasuryReserveKas: treasuryPayoutReserveKasUi,
+    wsUrl: KAS_WS_URL,
+    streamConnected,
+    streamRetryCount,
+  });
+  const {
+    isMobile,
+    isTablet,
+    summaryGridCols,
+    splitGridCols,
+    controlsGridCols,
+    pendingCount: pendingCountUi,
+    spendableKas,
+    liveExecutionReady,
+    autoCycleCountdownLabel,
+    lastDecision,
+    lastDecisionSource,
+    streamBadgeText,
+    streamBadgeColor,
+  } = uiSummary;
   const TABS = [
     {k:"overview",l:"OVERVIEW"},
     {k:"portfolio",l:"PORTFOLIO"},
@@ -640,28 +689,7 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
         </div>
       </div>
 
-      {!!kasDataError && (
-        <div style={{background:C.dLow,border:`1px solid ${C.danger}40`,borderRadius:6,padding:"11px 16px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-          <span style={{fontSize:12,color:C.danger,...mono}}>Kaspa live feed error (poll fallback): {kasDataError}</span>
-          <Btn onClick={refreshKasData} disabled={kasDataLoading} size="sm" variant="ghost">{kasDataLoading?"RECONNECTING...":"RECONNECT FEED"}</Btn>
-        </div>
-      )}
-
-      {liveExecutionArmed && !liveExecutionReady && (
-        <div style={{background:C.wLow, border:`1px solid ${C.warn}40`, borderRadius:6, padding:"11px 16px", marginBottom:14}}>
-          <span style={{fontSize:12, color:C.warn, ...mono}}>
-            Live execution is armed but not ready. Require DAG live feed and a real wallet provider session (Kasware, Kaspium, Kastle, Ghost, Tangem bridge, or OneKey bridge).
-          </span>
-        </div>
-      )}
-
-      {/* Pending signature alert */}
-      {pendingCount>0 && (
-        <div style={{background:C.wLow, border:`1px solid ${C.warn}40`, borderRadius:6, padding:"11px 16px", marginBottom:14, display:"flex", alignItems:isMobile ? "flex-start" : "center", justifyContent:"space-between", flexDirection:isMobile ? "column" : "row", gap:isMobile ? 8 : 0}}>
-          <span style={{fontSize:12, color:C.warn, ...mono}}>⚠ {pendingCount} transaction{pendingCount>1?"s":""} awaiting wallet signature</span>
-          <Btn onClick={()=>setTab("queue")} size="sm" variant="warn">VIEW QUEUE</Btn>
-        </div>
-      )}
+      <DashboardRuntimeNotices kasDataError={kasDataError} refreshKasData={refreshKasData} kasDataLoading={kasDataLoading} liveExecutionArmed={liveExecutionArmed} liveExecutionReady={liveExecutionReady} executionGuardrails={executionGuardrails} pendingCount={pendingCount} isMobile={isMobile} setTab={setTab} />
 
       {/* Tabs */}
       <div style={{display:"flex", borderBottom:`1px solid ${C.border}`, marginBottom:18, overflowX:"auto"}}>
@@ -693,15 +721,7 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
           <Card p={16} style={{marginBottom:12}}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:8}}>
               <Label>Mission Control</Label>
-              <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
-                <Badge text={NETWORK_LABEL.toUpperCase()} color={DEFAULT_BADGE_COLOR(NETWORK_LABEL)} />
-                <Badge text={status} color={status==="RUNNING"?C.ok:C.warn} dot />
-                <Badge text={execMode.toUpperCase()} color={C.accent} />
-                <Badge text={liveExecutionArmed ? "EXEC ARMED" : "EXEC SAFE"} color={liveExecutionArmed ? C.ok : C.warn} dot />
-                <Badge text={`AUTO ${autoCycleCountdownLabel}`} color={status==="RUNNING" ? C.ok : C.dim} />
-                <Badge text={`SOURCE ${lastDecisionSource.toUpperCase()}`} color={DECISION_SOURCE_BADGE_COLOR(lastDecisionSource)} />
-                <Badge text={`QUOTA ${usage.used}/${usage.limit}`} color={usage.locked ? C.danger : C.dim} />
-              </div>
+              <DashboardMissionControlBadges networkLabel={NETWORK_LABEL} status={status} execMode={execMode} liveExecutionArmed={liveExecutionArmed} autoCycleCountdownLabel={autoCycleCountdownLabel} lastDecisionSource={lastDecisionSource} usage={usage} executionGuardrails={executionGuardrails} receiptConsistencyMetrics={receiptConsistencyMetrics} />
             </div>
             <div style={{display:"grid", gridTemplateColumns:isTablet ? "1fr" : "1fr 1fr 1fr 1fr", gap:8, marginBottom:10}}>
               <div style={{background:C.s2, border:`1px solid ${C.border}`, borderRadius:6, padding:"10px 12px"}}>
@@ -815,7 +835,7 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
 
       {tab==="intelligence" && (
         <Suspense fallback={<Card p={18}><Label>Intelligence</Label><div style={{fontSize:12,color:C.dim}}>Loading intelligence panel...</div></Card>}>
-          <IntelligencePanel decisions={decisions} loading={loading} onRun={runCycle}/>
+          <IntelligencePanel decisions={decisions} queue={queue} loading={loading} onRun={runCycle}/>
         </Suspense>
       )}
       {tab==="attribution" && (
@@ -836,7 +856,15 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
           />
         </Suspense>
       )}
-      {tab==="queue" && <ActionQueue queue={queue} wallet={wallet} onSign={handleQueueSign} onReject={handleQueueReject}/>}
+      {tab==="queue" && (
+        <ActionQueue
+          queue={queue}
+          wallet={wallet}
+          onSign={handleQueueSign}
+          onReject={handleQueueReject}
+          receiptConsistencyMetrics={receiptConsistencyMetrics}
+        />
+      )}
       {tab==="treasury" && (
         <Suspense fallback={<Card p={18}><Label>Treasury</Label><div style={{fontSize:12,color:C.dim}}>Loading treasury panel...</div></Card>}>
           <TreasuryPanel log={log} agentCapital={agent.capitalLimit}/>
@@ -857,7 +885,39 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
               <div key={i} style={{display:"grid", gridTemplateColumns:isMobile ? "74px 58px 1fr" : "92px 72px 1fr 80px", gap:10, padding:"8px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center"}}>
                 <span style={{fontSize:11, color:C.dim, ...mono}}>{fmtT(e.ts)}</span>
                 <span style={{fontSize:11, color:LOG_COL[e.type]||C.dim, fontWeight:700, ...mono}}>{e.type}</span>
-                <span style={{fontSize:12, color:C.text, ...mono, lineHeight:1.4}}>{e.msg}</span>
+                <div style={{display:"flex", flexDirection:"column", gap:5}}>
+                  <div style={{fontSize:12, color:C.text, ...mono, lineHeight:1.4}}>{e.msg}</div>
+                  {(e?.truthLabel || e?.receiptProvenance) && (
+                    <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
+                      {e?.truthLabel && (
+                        <Badge
+                          text={String(e.truthLabel)}
+                          color={
+                            String(e.truthLabel).includes("CHAIN CONFIRMED")
+                              ? C.ok
+                              : String(e.truthLabel).includes("BACKEND CONFIRMED")
+                                ? C.purple
+                                : String(e.truthLabel).includes("BROADCASTED")
+                                  ? C.warn
+                                  : C.dim
+                          }
+                        />
+                      )}
+                      {e?.receiptProvenance && (
+                        <Badge
+                          text={String(e.receiptProvenance)}
+                          color={
+                            String(e.receiptProvenance).toUpperCase() === "CHAIN"
+                              ? C.ok
+                              : String(e.receiptProvenance).toUpperCase() === "BACKEND"
+                                ? C.purple
+                                : C.warn
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
                 {!isMobile && <span style={{fontSize:11, color:C.dim, textAlign:"right", ...mono}}>{e.fee!=null?`${e.fee} KAS`:"—"}</span>}
               </div>
             ))}
@@ -909,16 +969,4 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
       )}
     </div>
   );
-}
-
-function DEFAULT_BADGE_COLOR(networkLabel: string) {
-  return String(networkLabel || "").toLowerCase().includes("mainnet") ? C.warn : C.ok;
-}
-
-function DECISION_SOURCE_BADGE_COLOR(source: string) {
-  const normalized = String(source || "").toLowerCase();
-  if (normalized === "hybrid-ai") return C.accent;
-  if (normalized === "quant-core") return C.text;
-  if (normalized === "fallback") return C.warn;
-  return C.ok;
 }

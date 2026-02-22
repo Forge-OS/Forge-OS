@@ -4,6 +4,14 @@ FORGE.OS is a **Kaspa-native quant trading control plane** with wallet-native si
 
 <!-- If you're reading source, you're in the right place. FORGE.OS is built for operators, not just screenshots. -->
 
+<p align="center">
+  <img alt="Kaspa First" src="https://img.shields.io/badge/Kaspa-UTXO--First-00C2A8?style=for-the-badge" />
+  <img alt="Non-Custodial" src="https://img.shields.io/badge/Signing-Non--Custodial-1F2937?style=for-the-badge" />
+  <img alt="Mainnet First" src="https://img.shields.io/badge/Network-Mainnet--First-0F766E?style=for-the-badge" />
+  <img alt="Quant Plus AI" src="https://img.shields.io/badge/Decisioning-Quant%20%2B%20AI-7C3AED?style=for-the-badge" />
+  <img alt="Receipt Aware" src="https://img.shields.io/badge/Execution-Receipt--Aware-B45309?style=for-the-badge" />
+</p>
+
 It is built for operators who want:
 - Kaspa-first execution (UTXO-aware, non-custodial signing)
 - Real AI decisioning bounded by quant math and hard risk controls
@@ -23,6 +31,29 @@ It is built for operators who want:
 - [Production Readiness Checklist](#production-readiness-checklist)
 
 </details>
+
+## At A Glance (Operator Infographic)
+
+| Plane | What It Does | Why It Matters |
+| --- | --- | --- |
+| **Decision** | Deterministic quant core -> real AI overlay -> guarded fusion | Keeps the AI useful, but bounded by math + risk rules |
+| **Execution** | Wallet-native signing, queueing, lifecycle state machine, treasury routing | No seed storage, explicit approval paths, auditable tx flow |
+| **Truth / Audit** | Receipts, provenance badges, consistency checks, audit signatures | Operators can tell what is estimated vs confirmed vs verified |
+| **Scale** | AI proxy, scheduler, shared cache, callback consumer, metrics | Browser stays control plane while backend handles orchestration |
+
+### Runtime Loop (Mermaid)
+
+```mermaid
+flowchart LR
+  A[Kaspa Data Feed] --> B[Quant Core]
+  B --> C[AI Overlay]
+  C --> D[Guarded Fusion]
+  D --> E[Execution Queue]
+  E --> F[Wallet Sign/Broadcast]
+  F --> G[Receipt Poll + Backend Receipt Import]
+  G --> H[PnL Attribution + Alerts + Audit]
+  H --> B
+```
 
 ## Why FORGE.OS Is Different
 
@@ -176,6 +207,19 @@ Create `.env` from `.env.example`.
 - `VITE_AI_MAX_ATTEMPTS`
 - `VITE_QUANT_WORKER_ENABLED`
 - `VITE_QUANT_WORKER_SOFT_TIMEOUT_MS`
+- `VITE_DECISION_AUDIT_SIGNER_URL` (optional server-side cryptographic audit signer endpoint, `/v1/audit-sign`)
+- `VITE_DECISION_AUDIT_SIGNER_TOKEN` (optional)
+- `VITE_DECISION_AUDIT_SIGNER_TIMEOUT_MS`
+- `VITE_DECISION_AUDIT_SIGNER_REQUIRED`
+- `VITE_DECISION_AUDIT_SIGNER_PUBLIC_KEY_URL`, `VITE_DECISION_AUDIT_SIGNER_PINNED_FINGERPRINTS`, `VITE_DECISION_AUDIT_SIGNER_REQUIRE_PINNED` (UI-side signature verification + key pinning)
+
+### Backend Receipt Import (Optional, Recommended For Realized PnL)
+- `VITE_EXECUTION_RECEIPT_IMPORT_ENABLED`
+- `VITE_EXECUTION_RECEIPT_API_URL`
+- `VITE_EXECUTION_RECEIPT_API_TOKEN`
+- `VITE_EXECUTION_RECEIPT_API_TIMEOUT_MS`
+- `VITE_PNL_REALIZED_MIN_CONFIRMATIONS`
+- `VITE_PNL_REALIZED_CONFIRMATION_POLICY_JSON` (tiered realized confirmation policy by action/risk/amount)
 
 ### Quota / Monetization / Runtime Cadence
 - `VITE_FREE_CYCLES_PER_DAY`
@@ -200,6 +244,18 @@ Examples:
 Address validation, explorer links, treasury routing, and accumulation vault routing all follow the active profile.
 
 ## Wallet Support (Current)
+
+### Capability Snapshot (Infographic Matrix)
+
+| Wallet | Connect | Send | Multi-Output | Network Checks | Signing Custody |
+| --- | --- | --- | --- | --- | --- |
+| **Kasware** | Extension | `sendKaspa` | No (single-recipient path) | Yes | Wallet-side |
+| **Kaspium** | Deep-link/manual | Deep-link + `txid` handoff | No | Yes | Wallet-side |
+| **Kastle** | Extension | `sendKaspa` / `signAndBroadcastTx` | Conditional (raw tx path) | Yes | Wallet-side |
+| **Ghost Wallet** | Provider bridge | `transact` | Yes (outputs array) | Yes | Wallet-side |
+| **Tangem** | Bridge/manual | External sign+broadcast | Bridge-dependent | Address/profile validation in app | Device-side |
+| **OneKey** | Bridge/manual | External sign+broadcast | Bridge-dependent | Address/profile validation in app | Device-side |
+| **Demo** | Local | Simulated | Simulated | N/A | N/A |
 
 ### Kasware (Browser Extension)
 - Extension connect (`requestAccounts`, `getNetwork`)
@@ -290,12 +346,40 @@ FORGE.OS polls Kaspa transaction endpoints with backoff and persists receipt tel
 
 This feeds receipt-aware attribution (`estimated` / `hybrid` / `realized`) and improves operator trust in execution state.
 
+Forge.OS also enforces a **truth degradation policy**:
+- if backend-vs-chain receipt mismatch rate exceeds policy thresholds, `realized` attribution is downgraded to `hybrid`
+- optional policy can block autonomous auto-approve until receipt consistency recovers
+
+### Truth Ladder (What Counts As Real)
+
+```mermaid
+flowchart LR
+  A[SIMULATED] --> B[BROADCASTED]
+  B --> C[BACKEND CONFIRMED]
+  B --> D[CHAIN CONFIRMED]
+  C --> E[Receipt Consistency Check]
+  D --> E
+  E --> F[Realized PnL (confirmation floor policy)]
+```
+
+### Operator Trust Signals (UI)
+
+| Signal | Meaning |
+| --- | --- |
+| **Truth Label** | Execution state (`SIMULATED`, `BROADCASTED`, `BACKEND CONFIRMED`, `CHAIN CONFIRMED`, `ESTIMATED`) |
+| **Receipt Provenance** | Where confirmation telemetry came from (`CHAIN`, `BACKEND`, `ESTIMATED`) |
+| **Consistency Badge** | Whether backend and chain telemetry agree within configured tolerances |
+| **Audit Verification Badge** | Browser-side crypto signature verification + signer key pin status |
+
 ## Real AI + Quant Intelligence
 
 FORGE.OS uses a **quant-first, AI-bounded** model:
 - Deterministic quant core computes regime, volatility, risk score, EV, Kelly cap, SL/TP, and sizing
 - Real AI overlay refines decisions using quant context
 - Guarded fusion enforces risk limits and can block unsafe AI actions
+- Calibration guardrails can automatically:
+  - reduce `ACCUMULATE` sizing when calibration quality degrades
+  - disable auto-approve when calibration health falls below policy
 
 Production guidance:
 - Prefer backend proxy (`VITE_AI_API_URL`) for AI calls
@@ -348,6 +432,24 @@ Provides:
 
 This is the bridge toward moving orchestration out of the browser.
 
+### Backend Scale Topology (Mermaid)
+
+```mermaid
+flowchart TB
+  UI[FORGE.OS Browser Control Plane]
+  UI --> AP[AI Proxy]
+  UI --> SCH[Scheduler]
+  SCH --> KC[Shared Market Cache]
+  SCH --> CB[Callback Consumer]
+  SCH --> TXB[Tx Builder]
+  AP --> AI[AI Provider]
+  TXB --> KRPC[Kaspa API / UTXO Endpoints]
+  CB --> REC[Execution Receipts Store]
+  SCH --> MET[Prometheus Metrics]
+  CB --> MET
+  AP --> MET
+```
+
 ### Tx Builder (`server/tx-builder`)
 Run:
 ```bash
@@ -356,6 +458,7 @@ npm run tx-builder:start
 
 Provides:
 - backend tx-builder endpoint for automatic `Kastle` `signAndBroadcastTx(..., txJson)` flows
+- local `kaspa-wasm` builder mode (`TX_BUILDER_LOCAL_WASM_ENABLED=true`) for true automatic Kastle multi-output txJson generation from UTXOs
 - command-hook mode (`TX_BUILDER_COMMAND`) for local Kaspa tx-builder integration
 - bundled command executable `server/tx-builder/commands/kastle-http-bridge-command.mjs` for real `TX_BUILDER_COMMAND` deployments that proxy a dedicated builder
 - upstream proxy mode (`TX_BUILDER_UPSTREAM_URL`)
@@ -365,6 +468,7 @@ Provides:
 Frontend integration:
 - `VITE_KASTLE_TX_BUILDER_URL`
 - `VITE_KASTLE_TX_BUILDER_TOKEN` (optional)
+- `VITE_EXECUTION_RECEIPT_API_URL` / `VITE_EXECUTION_RECEIPT_API_TOKEN` (optional backend receipt import for UI PnL / receipt reconciliation)
 
 ### Callback Consumer (Reference) (`server/callback-consumer`)
 Run:
@@ -376,11 +480,35 @@ Provides:
 - downstream scheduler callback receiver with idempotency enforcement
 - leader fence-token enforcement (`X-ForgeOS-Leader-Fence-Token`)
 - exact execution receipt ingestion endpoints for backend attribution pipelines
+- Redis Lua-backed atomic fence/idempotency checks when Redis is enabled
+- receipt consistency telemetry counters in `/metrics` (checks, mismatches, mismatch type breakdown) for frontend-reported backend-vs-chain consistency checks
 - `GET /health`
 - `GET /metrics`
 - `GET /v1/events`
 - `POST /v1/scheduler/cycle`
 - `GET/POST /v1/execution-receipts`
+
+### Audit Signer (Reference) (`server/audit-signer`)
+Run:
+```bash
+npm run audit-signer:start
+```
+
+Provides:
+- server-side cryptographic signatures for frontend decision audit records
+- local-key mode (Ed25519 PEM) and HSM/KMS-ready command mode (`AUDIT_SIGNER_COMMAND`)
+- optional append-only hash-chained JSONL audit export (`AUDIT_SIGNER_APPEND_LOG_PATH`) for external verification / replay
+- UI can verify signer signatures client-side and enforce pinned signer fingerprints when configured
+- `GET /health`
+- `GET /metrics`
+- `GET /v1/public-key` (local-key mode)
+- `GET /v1/audit-log`
+- `POST /v1/audit-sign`
+
+Offline verification:
+```bash
+npm run audit-log:verify -- --file ./forgeos-audit.jsonl --strict-signatures
+```
 
 <details>
 <summary><strong>Hidden Ops Notes (GitHub-friendly collapsible)</strong></summary>
@@ -400,10 +528,21 @@ npm run lint
 npm run typecheck
 npm run test:run
 npm run test:perf
+npm run load:pipeline
 npm run build
 npm run ci
 npm run test:e2e
 ```
+
+### Command Map (What To Run / When)
+
+| Goal | Command | Notes |
+| --- | --- | --- |
+| Fast local correctness | `npm run ci` | Includes domain verify, lint, typecheck, tests, build, fallback sync/verify, smoke |
+| UI flow validation | `npm run test:e2e` | Playwright flows for wallet gate / queue / treasury / controls |
+| Redis scheduler semantics | `npm run test:scheduler:redis` | Runs Redis-backed scheduler integration specs when `TEST_REDIS_URL` is set |
+| Pipeline performance smoke | `npm run load:pipeline` | Supports threshold assertions and multi-scheduler mode |
+| Audit export verification | `npm run audit-log:verify -- --file ./forgeos-audit.jsonl --strict-signatures` | Offline hash-chain + signature verification |
 
 ### E2E Coverage (Playwright)
 Current flows include:
@@ -449,6 +588,22 @@ npm run domain:watch
    - Kasware connect/sign/send
    - Kaspium deep-link + `txid` confirmation
    - treasury fee payout destination and queue fallback behavior
+
+<details>
+<summary><strong>Operator Launch Sequence (1-minute sanity path)</strong></summary>
+
+1. `npm run ci`
+2. `npm run test:e2e`
+3. Start backend modules you need (`ai-proxy`, `scheduler`, `callback-consumer`, `tx-builder`)
+4. Confirm `/health` + `/metrics` on each enabled backend service
+5. Connect a real wallet on mainnet (`forge-os.xyz`)
+6. Execute one small transaction and verify:
+   - queue truth label updates
+   - receipt provenance badge
+   - treasury route destination
+   - attribution reflects confirmation state
+
+</details>
 
 ## Repo Map (High Signal)
 

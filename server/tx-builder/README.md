@@ -5,13 +5,12 @@ Backend tx-builder starter for automatic `Kastle` `signAndBroadcastTx(networkId,
 What it does:
 - Accepts normalized Forge.OS tx-build requests for Kastle multi-output sends
 - Returns `{ txJson }` for the frontend to pass into `kastle.signAndBroadcastTx(...)`
-- Supports two integration modes:
+- Supports local and bridged integration modes:
+  - local `kaspa-wasm` UTXO constructor (`TX_BUILDER_LOCAL_WASM_ENABLED=true`)
   - command hook (`TX_BUILDER_COMMAND`) for a local Kaspa tx builder script/service
   - upstream proxy (`TX_BUILDER_UPSTREAM_URL`) to a remote builder
 - Optional auth via shared tokens
 - `/health` + `/metrics`
-
-This starter does **not** include a Kaspa transaction-construction library by default. It is the integration surface for your local/remote builder.
 
 ## Endpoint
 - `POST /v1/kastle/build-tx-json`
@@ -44,6 +43,8 @@ Response shape:
 }
 ```
 
+`meta.mode` may be `local_wasm`, `command`, `upstream`, or `manual`.
+
 ## Run
 ```bash
 node server/tx-builder/index.mjs
@@ -53,6 +54,14 @@ With command hook:
 ```bash
 export TX_BUILDER_AUTH_TOKEN=super-secret
 export TX_BUILDER_COMMAND='node /path/to/your/kaspa-tx-builder.js'
+node server/tx-builder/index.mjs
+```
+
+With local `kaspa-wasm` builder (automatic UTXO fetch + txJson construction):
+```bash
+export TX_BUILDER_LOCAL_WASM_ENABLED=true
+export TX_BUILDER_KAS_API_MAINNET=https://api.kaspa.org
+export TX_BUILDER_KAS_API_TESTNET=https://api-tn10.kaspa.org
 node server/tx-builder/index.mjs
 ```
 
@@ -88,6 +97,19 @@ Optional:
 - `TX_BUILDER_AUTH_TOKEN` / `TX_BUILDER_AUTH_TOKENS`
 - `TX_BUILDER_AUTH_READS` (protect `GET /metrics`)
 - `TX_BUILDER_UPSTREAM_URL`, `TX_BUILDER_UPSTREAM_TOKEN`
+- `TX_BUILDER_LOCAL_WASM_ENABLED`
+- `TX_BUILDER_LOCAL_WASM_JSON_KIND` (`transaction` or `pending`)
+- `TX_BUILDER_LOCAL_WASM_COIN_SELECTION` (`auto`, `largest-first`, `smallest-first`, `oldest-first`, `newest-first`)
+- `TX_BUILDER_LOCAL_WASM_MAX_INPUTS`
+- `TX_BUILDER_LOCAL_WASM_ESTIMATED_NETWORK_FEE_SOMPI`
+- `TX_BUILDER_LOCAL_WASM_PER_INPUT_FEE_BUFFER_SOMPI`
+- `TX_BUILDER_LOCAL_WASM_EXTRA_SAFETY_BUFFER_SOMPI`
+- `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_MODE` (`request_or_fixed`, `fixed`, `output_bps`, `per_output`)
+- `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_SOMPI` / `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_OUTPUT_BPS` / `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_PER_OUTPUT_SOMPI`
+- `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_MIN_SOMPI` / `TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_MAX_SOMPI`
+- `TX_BUILDER_LOCAL_WASM_PREFER_CONSOLIDATION`
+- `TX_BUILDER_KAS_API_BASE` (legacy shared base) or `TX_BUILDER_KAS_API_MAINNET` / `TX_BUILDER_KAS_API_TESTNET`
+- `TX_BUILDER_KAS_API_TIMEOUT_MS`
 - `TX_BUILDER_COMMAND`
 - `TX_BUILDER_COMMAND_TIMEOUT_MS`
 - `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_URL`, `KASTLE_TX_BUILDER_COMMAND_UPSTREAM_TOKEN`
@@ -104,3 +126,8 @@ The command must write JSON to stdout:
 ```
 
 Non-zero exit code is treated as a build failure.
+
+## Local WASM Policy Notes
+- The local `kaspa-wasm` mode uses a dedicated fee/coin-selection policy module (`server/tx-builder/localPolicy.mjs`).
+- It selects UTXOs before invoking `Generator`, applies safety buffers for estimated network cost + per-input mass, and exposes policy metadata in the build response.
+- If policy-selected inputs fail to produce a pending transaction, the builder conservatively retries with all normalized UTXOs (same priority fee) before failing.

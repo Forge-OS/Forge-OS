@@ -136,6 +136,135 @@ export const BILLING_UPGRADE_URL = String(env.VITE_BILLING_UPGRADE_URL || "").tr
 export const BILLING_CONTACT = String(env.VITE_BILLING_CONTACT || "").trim();
 export const AUTO_CYCLE_SECONDS = Number(env.VITE_AUTO_CYCLE_SECONDS || 120);
 export const LIVE_EXECUTION_DEFAULT = String(env.VITE_LIVE_EXECUTION_DEFAULT || "false").toLowerCase() === "true";
+export const PNL_REALIZED_MIN_CONFIRMATIONS = Math.max(
+  1,
+  Math.round(Number(env.VITE_PNL_REALIZED_MIN_CONFIRMATIONS || 1))
+);
+
+function parseJsonObjectEnv(raw: string | undefined, label: string) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Expected a JSON object.");
+    }
+    return parsed as Record<string, any>;
+  } catch (err: any) {
+    throw new Error(`Invalid ${label}: ${String(err?.message || err || "json_parse_error")}`);
+  }
+}
+
+const DEFAULT_PNL_REALIZED_CONFIRMATION_POLICY = {
+  base: PNL_REALIZED_MIN_CONFIRMATIONS,
+  byAction: {
+    REDUCE: Math.max(PNL_REALIZED_MIN_CONFIRMATIONS, PNL_REALIZED_MIN_CONFIRMATIONS + 1),
+    REBALANCE: Math.max(PNL_REALIZED_MIN_CONFIRMATIONS, PNL_REALIZED_MIN_CONFIRMATIONS + 1),
+  },
+  byRisk: {
+    HIGH: Math.max(PNL_REALIZED_MIN_CONFIRMATIONS, PNL_REALIZED_MIN_CONFIRMATIONS + 1),
+  },
+  amountTiersKas: [] as Array<{ minAmountKas: number; minConfirmations: number }>,
+};
+
+const PNL_REALIZED_CONFIRMATION_POLICY_RAW = parseJsonObjectEnv(
+  env.VITE_PNL_REALIZED_CONFIRMATION_POLICY_JSON,
+  "VITE_PNL_REALIZED_CONFIRMATION_POLICY_JSON"
+);
+export const PNL_REALIZED_CONFIRMATION_POLICY = PNL_REALIZED_CONFIRMATION_POLICY_RAW
+  ? {
+      ...DEFAULT_PNL_REALIZED_CONFIRMATION_POLICY,
+      ...PNL_REALIZED_CONFIRMATION_POLICY_RAW,
+      byAction: {
+        ...DEFAULT_PNL_REALIZED_CONFIRMATION_POLICY.byAction,
+        ...(typeof PNL_REALIZED_CONFIRMATION_POLICY_RAW.byAction === "object" &&
+        !Array.isArray(PNL_REALIZED_CONFIRMATION_POLICY_RAW.byAction)
+          ? PNL_REALIZED_CONFIRMATION_POLICY_RAW.byAction
+          : {}),
+      },
+      byRisk: {
+        ...DEFAULT_PNL_REALIZED_CONFIRMATION_POLICY.byRisk,
+        ...(typeof PNL_REALIZED_CONFIRMATION_POLICY_RAW.byRisk === "object" &&
+        !Array.isArray(PNL_REALIZED_CONFIRMATION_POLICY_RAW.byRisk)
+          ? PNL_REALIZED_CONFIRMATION_POLICY_RAW.byRisk
+          : {}),
+      },
+      amountTiersKas: Array.isArray(PNL_REALIZED_CONFIRMATION_POLICY_RAW.amountTiersKas)
+        ? PNL_REALIZED_CONFIRMATION_POLICY_RAW.amountTiersKas
+        : DEFAULT_PNL_REALIZED_CONFIRMATION_POLICY.amountTiersKas,
+    }
+  : DEFAULT_PNL_REALIZED_CONFIRMATION_POLICY;
+
+export const RECEIPT_CONSISTENCY_CONFIRM_TS_TOLERANCE_MS = Math.max(
+  0,
+  Number(env.VITE_RECEIPT_CONSISTENCY_CONFIRM_TS_TOLERANCE_MS || 15000)
+);
+export const RECEIPT_CONSISTENCY_FEE_KAS_TOLERANCE = Math.max(
+  0,
+  Number(env.VITE_RECEIPT_CONSISTENCY_FEE_KAS_TOLERANCE || 0.001)
+);
+export const RECEIPT_CONSISTENCY_SLIPPAGE_KAS_TOLERANCE = Math.max(
+  0,
+  Number(env.VITE_RECEIPT_CONSISTENCY_SLIPPAGE_KAS_TOLERANCE || 0.02)
+);
+export const RECEIPT_CONSISTENCY_REPEAT_ALERT_THRESHOLD = Math.max(
+  2,
+  Math.round(Number(env.VITE_RECEIPT_CONSISTENCY_REPEAT_ALERT_THRESHOLD || 3))
+);
+export const RECEIPT_CONSISTENCY_DEGRADE_MIN_CHECKS = Math.max(
+  1,
+  Math.round(Number(env.VITE_RECEIPT_CONSISTENCY_DEGRADE_MIN_CHECKS || 6))
+);
+export const RECEIPT_CONSISTENCY_DEGRADE_MISMATCH_RATE_PCT = Math.max(
+  0,
+  Math.min(100, Number(env.VITE_RECEIPT_CONSISTENCY_DEGRADE_MISMATCH_RATE_PCT || 20))
+);
+export const RECEIPT_CONSISTENCY_BLOCK_AUTO_APPROVE_ON_DEGRADED =
+  String(env.VITE_RECEIPT_CONSISTENCY_BLOCK_AUTO_APPROVE_ON_DEGRADED || "true").toLowerCase() !== "false";
+
+export const CALIBRATION_GUARDRAILS_ENABLED =
+  String(env.VITE_CALIBRATION_GUARDRAILS_ENABLED || "true").toLowerCase() !== "false";
+export const CALIBRATION_MIN_SAMPLES = Math.max(
+  1,
+  Math.round(Number(env.VITE_CALIBRATION_MIN_SAMPLES || 12))
+);
+export const CALIBRATION_BRIER_WARN = Math.max(0, Number(env.VITE_CALIBRATION_BRIER_WARN || 0.24));
+export const CALIBRATION_BRIER_CRITICAL = Math.max(
+  CALIBRATION_BRIER_WARN,
+  Number(env.VITE_CALIBRATION_BRIER_CRITICAL || 0.34)
+);
+export const CALIBRATION_EV_CAL_ERROR_WARN_PCT = Math.max(
+  0,
+  Number(env.VITE_CALIBRATION_EV_CAL_ERROR_WARN_PCT || 2.0)
+);
+export const CALIBRATION_EV_CAL_ERROR_CRITICAL_PCT = Math.max(
+  CALIBRATION_EV_CAL_ERROR_WARN_PCT,
+  Number(env.VITE_CALIBRATION_EV_CAL_ERROR_CRITICAL_PCT || 5.0)
+);
+export const CALIBRATION_REGIME_HIT_MIN_PCT = Math.max(
+  0,
+  Math.min(100, Number(env.VITE_CALIBRATION_REGIME_HIT_MIN_PCT || 55))
+);
+export const CALIBRATION_REGIME_HIT_CRITICAL_PCT = Math.max(
+  0,
+  Math.min(CALIBRATION_REGIME_HIT_MIN_PCT, Number(env.VITE_CALIBRATION_REGIME_HIT_CRITICAL_PCT || 46))
+);
+export const CALIBRATION_SIZE_MULTIPLIER_WARN = Math.max(
+  0,
+  Math.min(1, Number(env.VITE_CALIBRATION_SIZE_MULTIPLIER_WARN || 0.85))
+);
+export const CALIBRATION_SIZE_MULTIPLIER_DEGRADED = Math.max(
+  0,
+  Math.min(CALIBRATION_SIZE_MULTIPLIER_WARN, Number(env.VITE_CALIBRATION_SIZE_MULTIPLIER_DEGRADED || 0.6))
+);
+export const CALIBRATION_SIZE_MULTIPLIER_CRITICAL = Math.max(
+  0,
+  Math.min(CALIBRATION_SIZE_MULTIPLIER_DEGRADED, Number(env.VITE_CALIBRATION_SIZE_MULTIPLIER_CRITICAL || 0.35))
+);
+export const CALIBRATION_AUTO_APPROVE_DISABLE_HEALTH_BELOW = Math.max(
+  0,
+  Math.min(1, Number(env.VITE_CALIBRATION_AUTO_APPROVE_DISABLE_HEALTH_BELOW || 0.4))
+);
 
 if (!Number.isFinite(FEE_RATE) || FEE_RATE < 0) {
   throw new Error("Invalid VITE_FEE_RATE. Expected a non-negative numeric value.");
@@ -153,4 +282,8 @@ if (!Number.isFinite(FREE_CYCLES_PER_DAY) || FREE_CYCLES_PER_DAY < 1) {
 
 if (!Number.isFinite(AUTO_CYCLE_SECONDS) || AUTO_CYCLE_SECONDS < 15) {
   throw new Error("Invalid VITE_AUTO_CYCLE_SECONDS. Expected a numeric value >= 15.");
+}
+
+if (!Number.isFinite(PNL_REALIZED_MIN_CONFIRMATIONS) || PNL_REALIZED_MIN_CONFIRMATIONS < 1) {
+  throw new Error("Invalid VITE_PNL_REALIZED_MIN_CONFIRMATIONS. Expected an integer >= 1.");
 }

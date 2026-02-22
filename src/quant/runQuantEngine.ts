@@ -1,5 +1,11 @@
 import { buildQuantCoreDecision, type QuantContext } from "./quantCore";
 import { clamp, round, toFinite } from "./math";
+import {
+  agentOverlayCacheKey,
+  createOverlayDecisionCache,
+  decisionSignature,
+  type CachedOverlayDecision,
+} from "./runQuantEngineOverlayCache";
 
 const env = import.meta.env;
 
@@ -21,14 +27,16 @@ const AI_OVERLAY_CACHE_MAX_ENTRIES = 512;
 const AI_TRANSPORT_READY = Boolean(AI_API_URL) && (!AI_API_URL.includes("api.anthropic.com") || Boolean(ANTHROPIC_API_KEY));
 const AI_MAX_ATTEMPTS = Math.max(1, Math.min(3, Number(env.VITE_AI_MAX_ATTEMPTS || 2)));
 const AI_RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const DECISION_AUDIT_RECORD_VERSION = "forgeos.decision.audit.v1";
+const AI_PROMPT_VERSION = "forgeos.quant.overlay.prompt.v1";
+const AI_RESPONSE_SCHEMA_VERSION = "forgeos.ai.decision.schema.v1";
+const AUDIT_HASH_ALGO = "fnv1a32/canonical-json";
+const AUDIT_SIGNER_URL = String(env.VITE_DECISION_AUDIT_SIGNER_URL || "").trim();
+const AUDIT_SIGNER_TOKEN = String(env.VITE_DECISION_AUDIT_SIGNER_TOKEN || "").trim();
+const AUDIT_SIGNER_TIMEOUT_MS = Math.max(500, Number(env.VITE_DECISION_AUDIT_SIGNER_TIMEOUT_MS || 1500));
+const AUDIT_SIGNER_REQUIRED = /^(1|true|yes)$/i.test(String(env.VITE_DECISION_AUDIT_SIGNER_REQUIRED || "false"));
 
-type CachedOverlayDecision = {
-  ts: number;
-  signature: string;
-  decision: any;
-};
-
-const AI_OVERLAY_CACHE = new Map<string, CachedOverlayDecision>();
+const AI_OVERLAY_CACHE = createOverlayDecisionCache(AI_OVERLAY_CACHE_MAX_ENTRIES);
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,6 +69,120 @@ function safeJsonParse(text: string) {
     return JSON.parse(text);
   } catch {
     throw new Error("AI response was not valid JSON");
+  }
+}
+
+function stableStringify(value: any): string {
+  if (value == null) return "null";
+  const t = typeof value;
+  if (t === "number") {
+    return Number.isFinite(value) ? JSON.stringify(value) : "null";
+  }
+  if (t === "boolean") return value ? "true" : "false";
+  if (t === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((v) => stableStringify(v)).join(",")}]`;
+  if (t === "object") {
+    const entries = Object.entries(value)
+      .filter(([_, v]) => typeof v !== "undefined")
+      .sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+  }
+  return "null";
+}
+
+function fnv1a32Hex(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function hashCanonical(value: any): string {
+  return `${AUDIT_HASH_ALGO}:${fnv1a32Hex(stableStringify(value))}`;
+}
+
+function auditSignerHeaders() {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (AUDIT_SIGNER_TOKEN) headers.Authorization = `Bearer ${AUDIT_SIGNER_TOKEN}`;
+  return headers;
+}
+
+function buildAuditSigningPayloadFromRecord(auditRecord: any) {
+  return {
+    audit_record_version: String(auditRecord?.audit_record_version || DECISION_AUDIT_RECORD_VERSION),
+    hash_algo: String(auditRecord?.hash_algo || AUDIT_HASH_ALGO),
+    prompt_version: String(auditRecord?.prompt_version || AI_PROMPT_VERSION),
+    ai_response_schema_version: String(auditRecord?.ai_response_schema_version || AI_RESPONSE_SCHEMA_VERSION),
+    quant_feature_snapshot_hash: String(auditRecord?.quant_feature_snapshot_hash || ""),
+    decision_hash: String(auditRecord?.decision_hash || ""),
+    overlay_plan_reason: String(auditRecord?.overlay_plan_reason || ""),
+    engine_path: String(auditRecord?.engine_path || ""),
+    created_ts: Math.max(0, Math.round(toFinite(auditRecord?.created_ts, Date.now()))),
+  };
+}
+
+async function maybeAttachCryptographicAuditSignature(decision: any) {
+  const auditRecord = decision?.audit_record;
+  if (!auditRecord || !AUDIT_SIGNER_URL) return decision;
+  const signingPayload = buildAuditSigningPayloadFromRecord(auditRecord);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AUDIT_SIGNER_TIMEOUT_MS);
+  try {
+    const res = await fetch(AUDIT_SIGNER_URL, {
+      method: "POST",
+      headers: auditSignerHeaders(),
+      body: JSON.stringify({ signingPayload }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(String(data?.error?.message || `audit_signer_${res.status || "failed"}`));
+    }
+    const sig = data?.signature && typeof data.signature === "object" ? data.signature : data;
+    const cryptoSignature = {
+      status: "signed",
+      alg: String(sig?.alg || sig?.algorithm || "unknown").slice(0, 80),
+      key_id: String(sig?.keyId || sig?.key_id || "").slice(0, 160),
+      sig_b64u: String(sig?.signatureB64u || sig?.signature || sig?.sig_b64u || "").slice(0, 600),
+      payload_hash_sha256_b64u: String(sig?.payloadHashSha256B64u || sig?.payload_hash_sha256_b64u || "").slice(0, 160),
+      signer: String(sig?.signer || "audit-signer").slice(0, 80),
+      signed_ts: Math.max(0, Math.round(toFinite(sig?.signedAt ?? sig?.signed_ts, Date.now()))),
+      signing_latency_ms: Math.max(0, Math.round(toFinite(sig?.signingLatencyMs ?? sig?.signing_latency_ms, 0))),
+      public_key_pem:
+        typeof sig?.publicKeyPem === "string"
+          ? sig.publicKeyPem.slice(0, 4000)
+          : (typeof sig?.public_key_pem === "string" ? sig.public_key_pem.slice(0, 4000) : undefined),
+    };
+    return {
+      ...decision,
+      audit_record: {
+        ...auditRecord,
+        crypto_signature: cryptoSignature,
+      },
+    };
+  } catch (err: any) {
+    const message =
+      err?.name === "AbortError"
+        ? `audit_signer_timeout_${AUDIT_SIGNER_TIMEOUT_MS}ms`
+        : String(err?.message || "audit_signer_failed");
+    if (AUDIT_SIGNER_REQUIRED) {
+      throw new Error(message);
+    }
+    return {
+      ...decision,
+      audit_record: {
+        ...auditRecord,
+        crypto_signature: {
+          status: "error",
+          signer: "audit-signer",
+          error: message.slice(0, 240),
+        },
+      },
+    };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -119,6 +241,56 @@ function sanitizeDecision(raw: any, agent: any) {
   const decisionSourceDetail = String(raw?.decision_source_detail || "").slice(0, 220);
   const quantMetrics = sanitizeQuantMetrics(raw?.quant_metrics);
   const engineLatencyMs = Math.max(0, Math.round(toFinite(raw?.engine_latency_ms, 0)));
+  const rawAudit = raw?.audit_record && typeof raw.audit_record === "object" ? raw.audit_record : null;
+  const rawCryptoSig = rawAudit?.crypto_signature && typeof rawAudit.crypto_signature === "object"
+    ? rawAudit.crypto_signature
+    : null;
+  const auditRecord = rawAudit
+    ? {
+        audit_record_version: String(rawAudit.audit_record_version || DECISION_AUDIT_RECORD_VERSION).slice(0, 80),
+        hash_algo: String(rawAudit.hash_algo || AUDIT_HASH_ALGO).slice(0, 64),
+        prompt_version: String(rawAudit.prompt_version || AI_PROMPT_VERSION).slice(0, 80),
+        ai_response_schema_version: String(rawAudit.ai_response_schema_version || AI_RESPONSE_SCHEMA_VERSION).slice(0, 80),
+        quant_feature_snapshot_hash: String(rawAudit.quant_feature_snapshot_hash || "").slice(0, 120),
+        decision_hash: String(rawAudit.decision_hash || "").slice(0, 120),
+        audit_sig: String(rawAudit.audit_sig || "").slice(0, 140),
+        overlay_plan_reason: String(rawAudit.overlay_plan_reason || "").slice(0, 160),
+        engine_path: String(rawAudit.engine_path || "").slice(0, 80),
+        prompt_used: Boolean(rawAudit.prompt_used),
+        ai_transport_ready: Boolean(rawAudit.ai_transport_ready),
+        created_ts: Math.max(0, Math.round(toFinite(rawAudit.created_ts, 0))),
+        crypto_signature: rawCryptoSig
+          ? {
+              status: String(rawCryptoSig.status || "").slice(0, 32) || undefined,
+              alg: String(rawCryptoSig.alg || "").slice(0, 80) || undefined,
+              key_id: String(rawCryptoSig.key_id || rawCryptoSig.keyId || "").slice(0, 160) || undefined,
+              sig_b64u: String(rawCryptoSig.sig_b64u || rawCryptoSig.signatureB64u || "").slice(0, 600) || undefined,
+              payload_hash_sha256_b64u:
+                String(rawCryptoSig.payload_hash_sha256_b64u || rawCryptoSig.payloadHashSha256B64u || "").slice(0, 160) || undefined,
+              signer: String(rawCryptoSig.signer || "").slice(0, 80) || undefined,
+              signed_ts: Math.max(0, Math.round(toFinite(rawCryptoSig.signed_ts ?? rawCryptoSig.signedAt, 0))),
+              signing_latency_ms: Math.max(0, Math.round(toFinite(rawCryptoSig.signing_latency_ms ?? rawCryptoSig.signingLatencyMs, 0))),
+              public_key_pem:
+                typeof rawCryptoSig.public_key_pem === "string"
+                  ? rawCryptoSig.public_key_pem.slice(0, 4000)
+                  : (typeof rawCryptoSig.publicKeyPem === "string" ? rawCryptoSig.publicKeyPem.slice(0, 4000) : undefined),
+              error: String(rawCryptoSig.error || "").slice(0, 240) || undefined,
+            }
+          : undefined,
+        quant_feature_snapshot_excerpt:
+          rawAudit.quant_feature_snapshot_excerpt && typeof rawAudit.quant_feature_snapshot_excerpt === "object"
+            ? {
+                regime: String(rawAudit.quant_feature_snapshot_excerpt.regime || "").slice(0, 40),
+                sample_count: Math.max(0, Math.round(toFinite(rawAudit.quant_feature_snapshot_excerpt.sample_count, 0))),
+                edge_score: round(toFinite(rawAudit.quant_feature_snapshot_excerpt.edge_score, 0), 6),
+                data_quality_score: round(toFinite(rawAudit.quant_feature_snapshot_excerpt.data_quality_score, 0), 6),
+                price_usd: round(toFinite(rawAudit.quant_feature_snapshot_excerpt.price_usd, 0), 8),
+                wallet_kas: round(toFinite(rawAudit.quant_feature_snapshot_excerpt.wallet_kas, 0), 6),
+                daa_score: Math.max(0, Math.round(toFinite(rawAudit.quant_feature_snapshot_excerpt.daa_score, 0))),
+              }
+            : undefined,
+      }
+    : undefined;
 
   return {
     action,
@@ -141,58 +313,117 @@ function sanitizeDecision(raw: any, agent: any) {
     decision_source_detail: decisionSourceDetail,
     quant_metrics: quantMetrics,
     engine_latency_ms: engineLatencyMs,
+    ...(auditRecord ? { audit_record: auditRecord } : {}),
   };
-}
-
-function cloneDecisionForCache(decision: any) {
-  return {
-    ...(decision || {}),
-    risk_factors: Array.isArray(decision?.risk_factors) ? [...decision.risk_factors] : [],
-    quant_metrics:
-      decision?.quant_metrics && typeof decision.quant_metrics === "object"
-        ? { ...decision.quant_metrics }
-        : undefined,
-  };
-}
-
-function agentOverlayCacheKey(agent: any, kasData?: any) {
-  const agentId = String(agent?.agentId || agent?.name || "default").trim().toLowerCase();
-  const risk = String(agent?.risk || "medium").trim().toLowerCase();
-  const cap = round(Math.max(0, toFinite(agent?.capitalLimit, 0)), 6);
-  const kpi = round(Math.max(0, toFinite(agent?.kpiTarget, 0)), 4);
-  const horizon = Math.max(0, Math.round(toFinite(agent?.horizon, 0)));
-  const autoApprove = round(Math.max(0, toFinite(agent?.autoApproveThreshold, 0)), 6);
-  const address = String(kasData?.address || "").trim().toLowerCase();
-  return `${agentId}|${risk}|${cap}|kpi:${kpi}|hz:${horizon}|aa:${autoApprove}|addr:${address}`;
-}
-
-function decisionSignature(decision: any) {
-  const qm = decision?.quant_metrics || {};
-  const regime = String(qm.regime || "NA");
-  const vol = String(decision?.volatility_estimate || "NA");
-  const action = String(decision?.action || "HOLD");
-  const confidenceBucket = Math.round(clamp(toFinite(decision?.confidence_score, 0) * 10, 0, 10));
-  const riskBucket = Math.round(clamp(toFinite(decision?.risk_score, 1) * 10, 0, 10));
-  const edgeBucket = Math.round(clamp(toFinite(qm.edge_score, 0) * 10, -20, 20));
-  const kellyBucket = Math.round(clamp(toFinite(decision?.kelly_fraction, 0) * 100, 0, 100));
-  const dataBucket = Math.round(clamp(toFinite(qm.data_quality_score, 0) * 10, 0, 10));
-  const sampleBucket = Math.round(clamp(toFinite(qm.sample_count, 0), 0, 999));
-  return [
-    regime,
-    vol,
-    action,
-    `c${confidenceBucket}`,
-    `r${riskBucket}`,
-    `e${edgeBucket}`,
-    `k${kellyBucket}`,
-    `d${dataBucket}`,
-    `s${sampleBucket}`,
-  ].join("|");
 }
 
 function appendSourceDetail(rawDetail: any, extra: string) {
   const base = String(rawDetail || "").trim();
   return [base, extra].filter(Boolean).join(";").slice(0, 220);
+}
+
+function buildQuantFeatureSnapshot(agent: any, kasData: any, quantCoreDecision: any) {
+  const qm = quantCoreDecision?.quant_metrics || {};
+  return {
+    agent: {
+      id: String(agent?.agentId || agent?.name || "agent"),
+      risk: String(agent?.risk || ""),
+      capitalLimit: round(Math.max(0, toFinite(agent?.capitalLimit, 0)), 6),
+      autoApproveThreshold: round(Math.max(0, toFinite(agent?.autoApproveThreshold, 0)), 6),
+      strategyTemplate: String(agent?.strategyTemplate || agent?.strategyLabel || "custom"),
+    },
+    kaspa: {
+      address: String(kasData?.address || ""),
+      walletKas: round(Math.max(0, toFinite(kasData?.walletKas, 0)), 6),
+      priceUsd: round(Math.max(0, toFinite(kasData?.priceUsd, 0)), 8),
+      daaScore: Math.max(0, Math.round(toFinite(kasData?.dag?.daaScore, 0))),
+      network: String(kasData?.dag?.networkName || kasData?.dag?.network || ""),
+    },
+    quantCore: {
+      action: String(quantCoreDecision?.action || "HOLD"),
+      confidence_score: round(toFinite(quantCoreDecision?.confidence_score, 0), 4),
+      risk_score: round(toFinite(quantCoreDecision?.risk_score, 0), 4),
+      kelly_fraction: round(toFinite(quantCoreDecision?.kelly_fraction, 0), 6),
+      capital_allocation_kas: round(toFinite(quantCoreDecision?.capital_allocation_kas, 0), 6),
+      expected_value_pct: round(toFinite(quantCoreDecision?.expected_value_pct, 0), 4),
+      quant_metrics: {
+        regime: String(qm?.regime || ""),
+        sample_count: Math.max(0, Math.round(toFinite(qm?.sample_count, 0))),
+        edge_score: round(toFinite(qm?.edge_score, 0), 6),
+        data_quality_score: round(toFinite(qm?.data_quality_score, 0), 6),
+        ewma_volatility: round(toFinite(qm?.ewma_volatility, 0), 6),
+        risk_ceiling: round(toFinite(qm?.risk_ceiling, 0), 6),
+        kelly_cap: round(toFinite(qm?.kelly_cap, 0), 6),
+      },
+    },
+  };
+}
+
+function attachDecisionAuditRecord(params: {
+  decision: any;
+  agent: any;
+  kasData: any;
+  quantCoreDecision: any;
+  overlayPlanReason: string;
+  enginePath: string;
+}) {
+  const decision = params.decision || {};
+  const quantSnapshot = buildQuantFeatureSnapshot(params.agent, params.kasData, params.quantCoreDecision);
+  const quantFeatureSnapshotHash = hashCanonical(quantSnapshot);
+  const decisionForHash = {
+    ...decision,
+    audit_record: undefined,
+  };
+  const decisionHash = hashCanonical(decisionForHash);
+  const auditSig = hashCanonical({
+    decision_hash: decisionHash,
+    quant_feature_snapshot_hash: quantFeatureSnapshotHash,
+    prompt_version: AI_PROMPT_VERSION,
+    ai_response_schema_version: AI_RESPONSE_SCHEMA_VERSION,
+    overlay_plan_reason: params.overlayPlanReason,
+    engine_path: params.enginePath,
+  });
+  return sanitizeDecision(
+    {
+      ...decision,
+      audit_record: {
+        audit_record_version: DECISION_AUDIT_RECORD_VERSION,
+        hash_algo: AUDIT_HASH_ALGO,
+        prompt_version: AI_PROMPT_VERSION,
+        ai_response_schema_version: AI_RESPONSE_SCHEMA_VERSION,
+        quant_feature_snapshot_hash: quantFeatureSnapshotHash,
+        decision_hash: decisionHash,
+        audit_sig: auditSig,
+        overlay_plan_reason: params.overlayPlanReason,
+        engine_path: params.enginePath,
+        prompt_used: params.enginePath === "hybrid-ai" || params.enginePath === "ai",
+        ai_transport_ready: AI_TRANSPORT_READY,
+        created_ts: Date.now(),
+        quant_feature_snapshot_excerpt: {
+          regime: String(params.quantCoreDecision?.quant_metrics?.regime || ""),
+          sample_count: Math.max(0, Math.round(toFinite(params.quantCoreDecision?.quant_metrics?.sample_count, 0))),
+          edge_score: round(toFinite(params.quantCoreDecision?.quant_metrics?.edge_score, 0), 6),
+          data_quality_score: round(toFinite(params.quantCoreDecision?.quant_metrics?.data_quality_score, 0), 6),
+          price_usd: round(toFinite(params.kasData?.priceUsd, 0), 8),
+          wallet_kas: round(toFinite(params.kasData?.walletKas, 0), 6),
+          daa_score: Math.max(0, Math.round(toFinite(params.kasData?.dag?.daaScore, 0))),
+        },
+      },
+    },
+    params.agent
+  );
+}
+
+async function finalizeDecisionAuditRecord(params: {
+  decision: any;
+  agent: any;
+  kasData: any;
+  quantCoreDecision: any;
+  overlayPlanReason: string;
+  enginePath: string;
+}) {
+  const withAudit = attachDecisionAuditRecord(params);
+  return maybeAttachCryptographicAuditSignature(withAudit);
 }
 
 function localQuantDecisionFromCore(agent: any, coreDecision: any, reason: string, startedAt: number) {
@@ -213,22 +444,11 @@ function localQuantDecision(agent: any, kasData: any, context: QuantContext | un
 }
 
 function getCachedOverlay(cacheKey: string) {
-  return AI_OVERLAY_CACHE.get(cacheKey) || null;
+  return AI_OVERLAY_CACHE.get(cacheKey);
 }
 
 function setCachedOverlay(cacheKey: string, signature: string, decision: any) {
-  AI_OVERLAY_CACHE.set(cacheKey, {
-    ts: Date.now(),
-    signature,
-    decision: cloneDecisionForCache(decision),
-  });
-
-  // Keep cache bounded for multi-agent sessions.
-  while (AI_OVERLAY_CACHE.size > AI_OVERLAY_CACHE_MAX_ENTRIES) {
-    const oldestKey = AI_OVERLAY_CACHE.keys().next().value;
-    if (!oldestKey) break;
-    AI_OVERLAY_CACHE.delete(oldestKey);
-  }
+  AI_OVERLAY_CACHE.set(cacheKey, signature, decision);
 }
 
 function sanitizeCachedOverlayDecision(agent: any, cached: CachedOverlayDecision, startedAt: number, reason: string) {
@@ -563,11 +783,25 @@ export async function runQuantEngine(agent: any, kasData: any, context?: QuantCo
 
   // Local quant core is the primary engine. AI acts only as a bounded overlay.
   if (overlayPlan.kind === "skip") {
-    return localQuantDecisionFromCore(agent, quantCoreDecision, overlayPlan.reason, startedAt);
+    return finalizeDecisionAuditRecord({
+      decision: localQuantDecisionFromCore(agent, quantCoreDecision, overlayPlan.reason, startedAt),
+      agent,
+      kasData,
+      quantCoreDecision,
+      overlayPlanReason: overlayPlan.reason,
+      enginePath: "quant-core",
+    });
   }
 
   if (overlayPlan.kind === "reuse" && cachedOverlay) {
-    return sanitizeCachedOverlayDecision(agent, cachedOverlay, startedAt, overlayPlan.reason);
+    return finalizeDecisionAuditRecord({
+      decision: sanitizeCachedOverlayDecision(agent, cachedOverlay, startedAt, overlayPlan.reason),
+      agent,
+      kasData,
+      quantCoreDecision,
+      overlayPlanReason: overlayPlan.reason,
+      enginePath: "hybrid-ai",
+    });
   }
 
   const aiStartedAt = Date.now();
@@ -577,22 +811,43 @@ export async function runQuantEngine(agent: any, kasData: any, context?: QuantCo
     const fused = fuseWithQuantCore(agent, quantCoreDecision, aiDecision, aiLatencyMs, startedAt);
     fused.decision_source_detail = appendSourceDetail(fused?.decision_source_detail, `overlay_plan:${overlayPlan.reason}`);
     setCachedOverlay(cacheKey, overlayPlan.signature, fused);
-    return fused;
+    return finalizeDecisionAuditRecord({
+      decision: fused,
+      agent,
+      kasData,
+      quantCoreDecision,
+      overlayPlanReason: overlayPlan.reason,
+      enginePath: "hybrid-ai",
+    });
   } catch (err: any) {
     if (cachedOverlay) {
       const cacheAgeMs = Math.max(0, Date.now() - cachedOverlay.ts);
       if (cacheAgeMs <= AI_OVERLAY_CACHE_TTL_MS) {
-        return sanitizeCachedOverlayDecision(
+        return finalizeDecisionAuditRecord({
+          decision: sanitizeCachedOverlayDecision(
+            agent,
+            cachedOverlay,
+            startedAt,
+            `ai_error_cache_reuse_${cacheAgeMs}ms`
+          ),
           agent,
-          cachedOverlay,
-          startedAt,
-          `ai_error_cache_reuse_${cacheAgeMs}ms`
-        );
+          kasData,
+          quantCoreDecision,
+          overlayPlanReason: `ai_error_cache_reuse_${cacheAgeMs}ms`,
+          enginePath: "hybrid-ai",
+        });
       }
     }
     if (AI_FALLBACK_ENABLED) {
       const reason = err?.name === "AbortError" ? `ai_timeout_${AI_TIMEOUT_MS}ms` : (err?.message || "request failure");
-      return localQuantDecisionFromCore(agent, quantCoreDecision, reason, startedAt);
+      return finalizeDecisionAuditRecord({
+        decision: localQuantDecisionFromCore(agent, quantCoreDecision, reason, startedAt),
+        agent,
+        kasData,
+        quantCoreDecision,
+        overlayPlanReason: reason,
+        enginePath: "quant-core",
+      });
     }
     if (err?.name === "AbortError") throw new Error(`AI request timeout (${AI_TIMEOUT_MS}ms)`);
     throw err;

@@ -1,6 +1,7 @@
 import http from "node:http";
 import { URL } from "node:url";
 import { spawn } from "node:child_process";
+import { describeLocalTxPolicyConfig, readLocalTxPolicyConfig, selectUtxoEntriesForLocalBuild } from "./localPolicy.mjs";
 
 const PORT = Number(process.env.PORT || 8795);
 const HOST = String(process.env.HOST || "0.0.0.0");
@@ -16,6 +17,17 @@ const REQUIRE_AUTH_FOR_READS = /^(1|true|yes)$/i.test(String(process.env.TX_BUIL
 const UPSTREAM_URL = String(process.env.TX_BUILDER_UPSTREAM_URL || "").trim();
 const UPSTREAM_TOKEN = String(process.env.TX_BUILDER_UPSTREAM_TOKEN || "").trim();
 const COMMAND = String(process.env.TX_BUILDER_COMMAND || "").trim();
+const LOCAL_WASM_ENABLED = /^(1|true|yes)$/i.test(String(process.env.TX_BUILDER_LOCAL_WASM_ENABLED || "false"));
+const LOCAL_WASM_JSON_KIND = String(process.env.TX_BUILDER_LOCAL_WASM_JSON_KIND || "transaction").trim().toLowerCase() === "pending"
+  ? "pending"
+  : "transaction";
+const KAS_API_MAINNET = String(process.env.TX_BUILDER_KAS_API_MAINNET || process.env.TX_BUILDER_KAS_API_BASE || "https://api.kaspa.org")
+  .trim()
+  .replace(/\/+$/, "");
+const KAS_API_TESTNET = String(process.env.TX_BUILDER_KAS_API_TESTNET || process.env.TX_BUILDER_KAS_API_BASE || "https://api-tn10.kaspa.org")
+  .trim()
+  .replace(/\/+$/, "");
+const KAS_API_TIMEOUT_MS = Math.max(1000, Number(process.env.TX_BUILDER_KAS_API_TIMEOUT_MS || 12000));
 const COMMAND_TIMEOUT_MS = Math.max(1000, Number(process.env.TX_BUILDER_COMMAND_TIMEOUT_MS || 15000));
 const REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.TX_BUILDER_REQUEST_TIMEOUT_MS || 15000));
 const ALLOW_MANUAL_TXJSON = /^(1|true|yes)$/i.test(String(process.env.TX_BUILDER_ALLOW_MANUAL_TXJSON || "false"));
@@ -28,11 +40,17 @@ const metrics = {
   buildRequestsTotal: 0,
   buildSuccessTotal: 0,
   buildErrorsTotal: 0,
+  localWasmRequestsTotal: 0,
+  localWasmErrorsTotal: 0,
+  localWasmUtxoFetchErrorsTotal: 0,
   upstreamRequestsTotal: 0,
   upstreamErrorsTotal: 0,
   commandRequestsTotal: 0,
   commandErrorsTotal: 0,
 };
+
+let kaspaWasmPromise = null;
+let localTxPolicyConfig = readLocalTxPolicyConfig();
 
 function nowMs() {
   return Date.now();
@@ -138,7 +156,204 @@ function normalizeBuildRequest(body) {
   if (!outputs.length) throw new Error("outputs_required");
   const purpose = String(body?.purpose || "").slice(0, 140);
   const manualTxJson = String(body?.txJson || "").trim();
-  return { wallet, networkId, fromAddress, outputs, purpose, txJson: manualTxJson };
+  const priorityFeeSompi = body?.priorityFeeSompi == null ? undefined : Math.max(0, Math.round(Number(body.priorityFeeSompi || 0)));
+  return { wallet, networkId, fromAddress, outputs, purpose, txJson: manualTxJson, priorityFeeSompi };
+}
+
+function amountKasToSompiBigInt(amountKas) {
+  const n = Number(amountKas || 0);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("invalid_output_amount");
+  const sompi = Math.round(n * 1e8);
+  if (!(sompi > 0)) throw new Error("invalid_output_amount");
+  return BigInt(sompi);
+}
+
+function safeJsonStringify(value) {
+  return JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
+}
+
+function kasApiBaseForNetwork(networkId) {
+  return networkId === "testnet-10" ? KAS_API_TESTNET : KAS_API_MAINNET;
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs) {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    const textValue = await res.text();
+    if (!res.ok) {
+      throw new Error(`upstream_${res.status}:${String(textValue || "").slice(0, 200)}`);
+    }
+    return textValue ? JSON.parse(textValue) : {};
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function loadKaspaWasm() {
+  if (kaspaWasmPromise) return kaspaWasmPromise;
+  kaspaWasmPromise = (async () => {
+    const wsMod = await import("isomorphic-ws");
+    if (typeof globalThis.WebSocket === "undefined") {
+      globalThis.WebSocket = wsMod.default || wsMod;
+    }
+    return import("kaspa-wasm");
+  })();
+  return kaspaWasmPromise;
+}
+
+function normalizeScriptHex(raw) {
+  const hex = String(raw || "").trim().toLowerCase();
+  if (!hex || /[^0-9a-f]/.test(hex)) return "";
+  return hex;
+}
+
+function normalizeUtxoEntriesForKaspaWasm(kaspa, fromAddress, payload) {
+  const list = Array.isArray(payload) ? payload : Array.isArray(payload?.utxos) ? payload.utxos : Array.isArray(payload?.entries) ? payload.entries : [];
+  if (!list.length) return [];
+  const addressJson = new kaspa.Address(fromAddress).toJSON();
+  const out = [];
+  for (const row of list) {
+    const txid = String(row?.outpoint?.transactionId || row?.outpoint?.txid || "").trim().toLowerCase();
+    const index = Number(row?.outpoint?.index);
+    const amount = Number(row?.utxoEntry?.amount ?? row?.amount);
+    const blockDaaScore = Number(row?.utxoEntry?.blockDaaScore ?? row?.blockDaaScore ?? 0);
+    const isCoinbase = Boolean(row?.utxoEntry?.isCoinbase ?? row?.isCoinbase);
+    const scriptHex = normalizeScriptHex(
+      row?.utxoEntry?.scriptPublicKey?.scriptPublicKey ??
+      row?.utxoEntry?.scriptPublicKey?.script ??
+      row?.scriptPublicKey?.scriptPublicKey ??
+      row?.scriptPublicKey?.script
+    );
+    if (!/^[a-f0-9]{64}$/.test(txid)) continue;
+    if (!Number.isFinite(index) || index < 0) continue;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    if (!scriptHex) continue;
+    out.push({
+      address: addressJson,
+      outpoint: { transactionId: txid, index: Math.round(index) },
+      utxoEntry: {
+        amount: Math.round(amount),
+        scriptPublicKey: new kaspa.ScriptPublicKey(0, scriptHex),
+        blockDaaScore: Number.isFinite(blockDaaScore) ? Math.max(0, Math.round(blockDaaScore)) : 0,
+        isCoinbase,
+      },
+    });
+  }
+  return out;
+}
+
+async function buildTxJsonLocalWasm(payload) {
+  metrics.localWasmRequestsTotal += 1;
+  try {
+    const kaspa = await loadKaspaWasm();
+    const apiBase = kasApiBaseForNetwork(payload.networkId);
+    if (!apiBase) throw new Error("kas_api_base_not_configured");
+    const utxoPath = `/addresses/${encodeURIComponent(payload.fromAddress)}/utxos`;
+    let utxoPayload;
+    try {
+      utxoPayload = await fetchJsonWithTimeout(`${apiBase}${utxoPath}`, KAS_API_TIMEOUT_MS);
+    } catch (e) {
+      metrics.localWasmUtxoFetchErrorsTotal += 1;
+      throw e;
+    }
+    const entries = normalizeUtxoEntriesForKaspaWasm(kaspa, payload.fromAddress, utxoPayload);
+    if (!entries.length) throw new Error("no_spendable_utxos");
+
+    const changeAddress = new kaspa.Address(payload.fromAddress).toJSON();
+    const outputs = payload.outputs.map((o) => {
+      const amountSompi = amountKasToSompiBigInt(o.amountKas);
+      return {
+        address: o.address,
+        amount: amountSompi,
+      };
+    });
+    const outputsTotalSompi = outputs.reduce((sum, o) => sum + BigInt(o.amount), 0n);
+    localTxPolicyConfig = readLocalTxPolicyConfig();
+    let policyPlan = selectUtxoEntriesForLocalBuild({
+      entries,
+      outputsTotalSompi,
+      outputCount: outputs.length,
+      requestPriorityFeeSompi: payload.priorityFeeSompi,
+      config: localTxPolicyConfig,
+    });
+    if (!policyPlan.selectedEntries.length) throw new Error("tx_builder_no_selected_utxos");
+    let priorityFeeSompi = Math.max(0, Number(policyPlan.priorityFeeSompi || 0));
+
+    const buildWithEntries = async (candidateEntries, candidatePriorityFeeSompi) => {
+      const generator = new kaspa.Generator({
+        entries: candidateEntries,
+        changeAddress,
+        outputs,
+        priorityFee: BigInt(Math.max(0, Math.round(Number(candidatePriorityFeeSompi || 0)))),
+      });
+      return generator.next();
+    };
+
+    let pendingTx = null;
+    let selectedBuildError = null;
+    try {
+      pendingTx = await buildWithEntries(policyPlan.selectedEntries, priorityFeeSompi);
+    } catch (e) {
+      selectedBuildError = e;
+    }
+    let fallbackUsedAllInputs = false;
+    if (!pendingTx && policyPlan.selectedEntries.length < entries.length) {
+      // Conservative fallback if policy-selected inputs fail to build a valid pending transaction.
+      fallbackUsedAllInputs = true;
+      priorityFeeSompi = Math.max(0, Number(policyPlan.priorityFeeSompi || 0));
+      pendingTx = await buildWithEntries(entries, priorityFeeSompi);
+    }
+    if (!pendingTx) {
+      if (selectedBuildError) throw selectedBuildError;
+      throw new Error("tx_builder_insufficient_funds_or_utxos");
+    }
+
+    const policyMeta = {
+      selectionMode: String(policyPlan.selectionMode || "auto"),
+      selectedInputs: fallbackUsedAllInputs ? entries.length : policyPlan.selectedEntries.length,
+      totalInputs: entries.length,
+      truncatedByMaxInputs: Boolean(policyPlan.truncatedByMaxInputs),
+      selectedAmountSompi: String(fallbackUsedAllInputs
+        ? entries.reduce((sum, e) => sum + BigInt(Math.max(0, Math.round(Number(e?.utxoEntry?.amount || 0)))), 0n)
+        : (policyPlan.selectedAmountSompi || 0n)),
+      outputsTotalSompi: String(outputsTotalSompi),
+      requiredTargetSompi: String(policyPlan.requiredTargetSompi || 0n),
+      priorityFeeSompi: String(priorityFeeSompi),
+      fallbackUsedAllInputs,
+      ...(selectedBuildError ? { selectedBuildError: String(selectedBuildError?.message || selectedBuildError).slice(0, 200) } : {}),
+      config: describeLocalTxPolicyConfig(localTxPolicyConfig),
+    };
+
+
+    let jsonObject;
+    if (LOCAL_WASM_JSON_KIND === "pending") {
+      jsonObject = pendingTx.toJSON();
+    } else {
+      const tx = pendingTx?.transaction;
+      if (!tx || typeof tx.toJSON !== "function") throw new Error("pending_transaction_missing_transaction");
+      jsonObject = tx.toJSON();
+    }
+    const txJson = safeJsonStringify(jsonObject);
+    if (!txJson) throw new Error("local_wasm_missing_txJson");
+    return {
+      txJson,
+      mode: "local_wasm",
+      txid: String(pendingTx?.id || "").trim() || undefined,
+      utxoCount: entries.length,
+      apiBase,
+      jsonKind: LOCAL_WASM_JSON_KIND,
+      policy: policyMeta,
+    };
+  } catch (e) {
+    metrics.localWasmErrorsTotal += 1;
+    throw e;
+  }
 }
 
 async function proxyToUpstream(payload) {
@@ -212,6 +427,7 @@ async function runCommandBuilder(payload) {
 }
 
 async function buildTxJson(payload) {
+  if (LOCAL_WASM_ENABLED) return buildTxJsonLocalWasm(payload);
   if (COMMAND) return runCommandBuilder(payload);
   if (UPSTREAM_URL) return proxyToUpstream(payload);
   if (ALLOW_MANUAL_TXJSON && payload.txJson) return { txJson: payload.txJson, mode: "manual" };
@@ -233,6 +449,15 @@ function exportPrometheus() {
   push("# HELP forgeos_tx_builder_build_errors_total Build errors.");
   push("# TYPE forgeos_tx_builder_build_errors_total counter");
   push(`forgeos_tx_builder_build_errors_total ${metrics.buildErrorsTotal}`);
+  push("# HELP forgeos_tx_builder_local_wasm_requests_total Local WASM build attempts.");
+  push("# TYPE forgeos_tx_builder_local_wasm_requests_total counter");
+  push(`forgeos_tx_builder_local_wasm_requests_total ${metrics.localWasmRequestsTotal}`);
+  push("# HELP forgeos_tx_builder_local_wasm_errors_total Local WASM build errors.");
+  push("# TYPE forgeos_tx_builder_local_wasm_errors_total counter");
+  push(`forgeos_tx_builder_local_wasm_errors_total ${metrics.localWasmErrorsTotal}`);
+  push("# HELP forgeos_tx_builder_local_wasm_utxo_fetch_errors_total Local WASM UTXO fetch errors.");
+  push("# TYPE forgeos_tx_builder_local_wasm_utxo_fetch_errors_total counter");
+  push(`forgeos_tx_builder_local_wasm_utxo_fetch_errors_total ${metrics.localWasmUtxoFetchErrorsTotal}`);
   push("# HELP forgeos_tx_builder_auth_failures_total Auth failures.");
   push("# TYPE forgeos_tx_builder_auth_failures_total counter");
   push(`forgeos_tx_builder_auth_failures_total ${metrics.authFailuresTotal}`);
@@ -274,7 +499,12 @@ const server = http.createServer(async (req, res) => {
       service: "forgeos-tx-builder",
       auth: { enabled: authEnabled(), requireAuthForReads: REQUIRE_AUTH_FOR_READS },
       builder: {
-        mode: COMMAND ? "command" : UPSTREAM_URL ? "upstream" : ALLOW_MANUAL_TXJSON ? "manual" : "unconfigured",
+        mode: LOCAL_WASM_ENABLED ? "local_wasm" : COMMAND ? "command" : UPSTREAM_URL ? "upstream" : ALLOW_MANUAL_TXJSON ? "manual" : "unconfigured",
+        localWasmEnabled: LOCAL_WASM_ENABLED,
+        localWasmJsonKind: LOCAL_WASM_JSON_KIND,
+        kasApiMainnet: KAS_API_MAINNET || null,
+        kasApiTestnet: KAS_API_TESTNET || null,
+        localWasmPolicy: describeLocalTxPolicyConfig(localTxPolicyConfig),
         hasCommand: Boolean(COMMAND),
         hasUpstream: Boolean(UPSTREAM_URL),
         allowManualTxJson: ALLOW_MANUAL_TXJSON,
@@ -307,6 +537,10 @@ const server = http.createServer(async (req, res) => {
           networkId: payload.networkId,
           outputs: payload.outputs.length,
           fromAddress: payload.fromAddress,
+          ...(result?.txid ? { txid: result.txid } : {}),
+          ...(result?.utxoCount ? { utxoCount: result.utxoCount } : {}),
+          ...(result?.jsonKind ? { jsonKind: result.jsonKind } : {}),
+          ...(result?.policy ? { policy: result.policy } : {}),
         },
       }, origin);
       recordHttp(routeKey, 200);
@@ -325,7 +559,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`[forgeos-tx-builder] listening on http://${HOST}:${PORT}`);
   console.log(
-    `[forgeos-tx-builder] auth=${authEnabled() ? "on" : "off"} mode=${COMMAND ? "command" : UPSTREAM_URL ? "upstream" : ALLOW_MANUAL_TXJSON ? "manual" : "unconfigured"}`
+    `[forgeos-tx-builder] auth=${authEnabled() ? "on" : "off"} mode=${LOCAL_WASM_ENABLED ? "local_wasm" : COMMAND ? "command" : UPSTREAM_URL ? "upstream" : ALLOW_MANUAL_TXJSON ? "manual" : "unconfigured"}`
   );
 });
-

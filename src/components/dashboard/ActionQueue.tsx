@@ -3,17 +3,63 @@ import { fmtT, shortAddr } from "../../helpers";
 import { C, mono } from "../../tokens";
 import { Badge, Btn, Card, ExtLink } from "../ui";
 
-export function ActionQueue({queue, wallet, onSign, onReject}: any) {
+export function ActionQueue({queue, wallet, onSign, onReject, receiptConsistencyMetrics}: any) {
   const receiptColor = (state: string) => {
     if (state === "confirmed") return C.ok;
     if (state === "failed" || state === "timeout") return C.danger;
     if (state === "pending_confirm" || state === "broadcasted") return C.warn;
     return C.dim;
   };
+  const receiptProvenance = (item: any) => {
+    if (String(item?.status || "") !== "signed") return null;
+    const imported = String(item?.receipt_imported_from || "").toLowerCase();
+    const sourcePath = String(item?.receipt_source_path || "").toLowerCase();
+    const confirmSource = String(item?.confirm_ts_source || "").toLowerCase();
+    if (imported === "callback_consumer" || sourcePath.includes("callback-consumer")) {
+      return { text: "BACKEND", color: C.purple };
+    }
+    if (imported === "kaspa_api" || confirmSource === "chain") {
+      return { text: "CHAIN", color: C.ok };
+    }
+    return { text: "ESTIMATED", color: C.warn };
+  };
+  const truthLabel = (item: any) => {
+    if (String(item?.status || "") !== "signed") return { text: "ESTIMATED", color: C.warn };
+    const prov = receiptProvenance(item);
+    const receiptState = String(item?.receipt_lifecycle || "submitted");
+    if (receiptState === "confirmed") {
+      if (prov.text === "BACKEND") return { text: "BACKEND CONFIRMED", color: C.purple };
+      if (prov.text === "CHAIN") return { text: "CHAIN CONFIRMED", color: C.ok };
+      return { text: "ESTIMATED", color: C.warn };
+    }
+    if (receiptState === "broadcasted" || receiptState === "pending_confirm" || receiptState === "submitted") {
+      return { text: "BROADCASTED", color: C.warn };
+    }
+    return { text: "ESTIMATED", color: C.warn };
+  };
+  const consistencyBadge = (item: any) => {
+    if (String(item?.status || "") !== "signed") return null;
+    const state = String(item?.receipt_consistency_status || "insufficient");
+    if (state === "consistent") return { text: "CONSISTENT", color: C.ok };
+    if (state === "mismatch") return { text: "MISMATCH", color: C.danger };
+    return { text: "CHECKING", color: C.dim };
+  };
   return(
     <div>
       <div style={{fontSize:13, color:C.text, fontWeight:700, ...mono, marginBottom:4}}>Action Queue</div>
-      <div style={{fontSize:12, color:C.dim, marginBottom:16}}>Transactions pending wallet signature. Auto-approved items processed immediately.</div>
+      <div style={{display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:16}}>
+        <div style={{fontSize:12, color:C.dim}}>Transactions pending wallet signature. Auto-approved items processed immediately.</div>
+        {receiptConsistencyMetrics && (
+          <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
+            <Badge text={`RC ${Number(receiptConsistencyMetrics.checked || 0)} checked`} color={C.dim} />
+            <Badge text={`OK ${Number(receiptConsistencyMetrics.consistent || 0)}`} color={C.ok} />
+            <Badge text={`MM ${Number(receiptConsistencyMetrics.mismatch || 0)}`} color={C.danger} />
+            {Number(receiptConsistencyMetrics.repeatedMismatchItems || 0) > 0 && (
+              <Badge text={`REPEAT ${Number(receiptConsistencyMetrics.repeatedMismatchItems || 0)}`} color={C.warn} />
+            )}
+          </div>
+        )}
+      </div>
       {queue.length===0 && (
         <Card p={32} style={{textAlign:"center"}}>
           <div style={{fontSize:13, color:C.dim, ...mono, marginBottom:4}}>Queue empty</div>
@@ -45,6 +91,33 @@ export function ActionQueue({queue, wallet, onSign, onReject}: any) {
                     dot
                   />
                 )}
+                {item.status==="signed" && (
+                  <Badge
+                    data-testid={`queue-item-truth-${String(item.id)}`}
+                    text={truthLabel(item).text}
+                    color={truthLabel(item).color}
+                  />
+                )}
+                {item.status==="signed" && (() => {
+                  const prov = receiptProvenance(item);
+                  return prov ? (
+                    <Badge
+                      data-testid={`queue-item-provenance-${String(item.id)}`}
+                      text={prov.text}
+                      color={prov.color}
+                    />
+                  ) : null;
+                })()}
+                {item.status==="signed" && (() => {
+                  const c = consistencyBadge(item);
+                  return c ? (
+                    <Badge
+                      data-testid={`queue-item-consistency-${String(item.id)}`}
+                      text={c.text}
+                      color={c.color}
+                    />
+                  ) : null;
+                })()}
               </div>
               <div style={{fontSize:11, color:C.dim, ...mono}}>{fmtT(item.ts)}</div>
             </div>

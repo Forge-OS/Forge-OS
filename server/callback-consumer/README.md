@@ -15,6 +15,7 @@ This is a starter service for production callback consumers.
 - `GET /v1/events`
 - `POST /v1/scheduler/cycle`
 - `GET /v1/execution-receipts?txid=<txid>`
+- `GET /v1/execution-receipts/stream` (SSE push stream for receipt updates)
 - `POST /v1/execution-receipts`
 
 ## Scheduler Callback Headers (Consumed)
@@ -88,9 +89,11 @@ curl -X POST http://127.0.0.1:8796/v1/execution-receipts \
 - `CALLBACK_CONSUMER_IDEMPOTENCY_TTL_MS`
 - `CALLBACK_CONSUMER_MAX_EVENTS`
 - `CALLBACK_CONSUMER_MAX_RECEIPTS`
+- `CALLBACK_CONSUMER_RECEIPT_SSE_HEARTBEAT_MS`
+- `CALLBACK_CONSUMER_RECEIPT_SSE_MAX_CLIENTS`
+- `CALLBACK_CONSUMER_RECEIPT_SSE_REPLAY_DEFAULT_LIMIT`
 
 ## Production Notes
-- This service enforces idempotency + fence ordering, but downstream business logic should also persist and enforce idempotency/fence semantics.
+- This service now uses Redis Lua scripts for atomic idempotency + fence checks (when Redis is enabled), but downstream business logic should still persist and enforce idempotency/fence semantics.
 - Redis support is optional; without Redis, state is in-memory only.
-- For high scale, move fence/idempotency operations to Lua scripts for stronger atomicity guarantees.
-
+- Browser UIs can subscribe to `GET /v1/execution-receipts/stream` (SSE) to reduce receipt polling and drive PnL updates from backend receipt ingestion.
