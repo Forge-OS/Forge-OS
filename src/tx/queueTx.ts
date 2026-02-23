@@ -1,5 +1,5 @@
 import { normalizeKaspaAddress } from "../helpers";
-import { ALLOWED_ADDRESS_PREFIXES } from "../constants";
+import { ALLOWED_ADDRESS_PREFIXES, TREASURY } from "../constants";
 import { WalletAdapter } from "../wallet/WalletAdapter";
 
 export type QueueTxStatus = "pending" | "signing" | "signed" | "rejected" | "failed";
@@ -9,6 +9,34 @@ export type QueueTxOutput = {
   amount_kas: number;
   tag?: string;
 };
+
+/**
+ * Validates that the principal (amount_kas) does NOT go to the Treasury address.
+ * This is a critical security check to prevent funds from being incorrectly routed.
+ * 
+ * @param outputs - Array of transaction outputs
+ * @param primaryAmount - The principal amount (should match the primary output)
+ * @throws Error if principal is being sent to treasury
+ */
+export function validateNoPrincipalToTreasury(outputs: QueueTxOutput[] | undefined, primaryAmount: number): void {
+  if (!outputs || !outputs.length) return;
+  
+  const treasuryNormalized = TREASURY.toLowerCase();
+  
+  for (const output of outputs) {
+    const isTreasury = output.to.toLowerCase() === treasuryNormalized;
+    const isPrincipal = (output.tag || "").toLowerCase() === "primary" || 
+                       (output.amount_kas === primaryAmount && primaryAmount > 0);
+    
+    // If this output goes to treasury AND is marked as primary, that's a bug
+    if (isTreasury && isPrincipal) {
+      throw new Error(
+        `SECURITY VALIDATION FAILED: Principal (${output.amount_kas} KAS) cannot be sent to Treasury. ` +
+        `Principal must go to agent deposit address. Treasury receives only platform fee.`
+      );
+    }
+  }
+}
 
 export type QueueTxItem = {
   id: string;
@@ -101,6 +129,10 @@ export function validateQueueTxItem(input: any): QueueTxItem {
   const to = primary.to;
   const amount = Number(finite(primary.amount_kas, 0).toFixed(6));
   if (!(amount > 0) || !to) throw new Error("Invalid tx amount_kas/to; must be > 0 and valid address");
+
+  // CRITICAL: Validate that principal does NOT go to Treasury
+  // This prevents the security bug where user deposits were incorrectly sent to treasury
+  validateNoPrincipalToTreasury(outputs, amount);
 
   const statusRaw = String(input?.status || "pending").toLowerCase();
   const status: QueueTxStatus =

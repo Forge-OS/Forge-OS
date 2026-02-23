@@ -30,6 +30,7 @@ import { derivePnlAttribution } from "../../analytics/pnlAttribution";
 import { formatForgeError, normalizeError } from "../../runtime/errorTaxonomy";
 import { buildQueueTxItem } from "../../tx/queueTx";
 import { WalletAdapter } from "../../wallet/WalletAdapter";
+import { getAgentDepositAddress } from "../../runtime/agentDeposit";
 import { useAgentLifecycle } from "./hooks/useAgentLifecycle";
 import { useAutoCycleLoop } from "./hooks/useAutoCycleLoop";
 import { useAlerts } from "./hooks/useAlerts";
@@ -441,17 +442,20 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
             addLog({type:"EXEC", msg:"HOLD — computed execution amount is zero", fee:0.03});
             return;
           }
+          // Get agent deposit address for this wallet session
+          const agentDepositAddr = getAgentDepositAddress(wallet?.address);
           const baseTxItem = buildQueueTxItem({
             id:uid(),
             type:dec.action,
             metaKind: "action",
             from:wallet?.address,
-            to:ACCUMULATION_VAULT,
+            to:agentDepositAddr || ACCUMULATION_VAULT,
             amount_kas:Number(amountKas.toFixed(6)),
             purpose:dec.rationale.slice(0,60),
             status:"pending",
             ts:Date.now(),
-            dec
+            dec,
+            agentDepositAddress: agentDepositAddr,
           });
           const txItem = attachCombinedTreasuryOutput(baseTxItem);
           if (txItem?.treasuryCombined) {

@@ -10,6 +10,86 @@ export const DEFS = {
   portfolioAllocationPct:"25",
 };
 
+// Professional/Expert presets for advanced users
+export const PROFESSIONAL_PRESETS = [
+  {
+    id: "market_maker",
+    name: "Market Maker Pro",
+    tag: "MM-PRO",
+    tagColor: "#06B6D4", // Cyan
+    class: "market-making",
+    purpose: "Professional market-making strategy with tight spreads and high-frequency inventory management.",
+    bestFor: "Liquidity provision, spread capture, and neutral delta positioning.",
+    desc: "Dual-sided quotes, dynamic spread adjustment, inventory skew controls, and maker fee optimization.",
+    defaults: {
+      risk: "low",
+      kpiTarget: "8",
+      horizon: 7,
+      frequency: "5m",
+      revenueSource: "market-making",
+      execMode: "autonomous",
+      autoApproveThreshold: "100",
+    },
+  },
+  {
+    id: "investment_banker",
+    name: "Investment Banker",
+    tag: "IB-PRO",
+    tagColor: "#8B5CF6", // Violet
+    class: "institutional",
+    purpose: "Institutional-grade portfolio management with sophisticated risk controls and compliance features.",
+    bestFor: "Large capital deployment, institutional allocation, and regulated trading.",
+    desc: "Multi-sig workflows, compliance checkpoints, treasury management, and institutional reporting.",
+    defaults: {
+      risk: "low",
+      kpiTarget: "15",
+      horizon: 180,
+      frequency: "4h",
+      revenueSource: "institutional",
+      execMode: "manual",
+      autoApproveThreshold: "10",
+    },
+  },
+  {
+    id: "trader",
+    name: "Pro Trader",
+    tag: "TRADER",
+    tagColor: "#F97316", // Orange
+    class: "trading",
+    purpose: "Active trading strategy with technical analysis, momentum捕捉, and active position management.",
+    bestFor: "Day trading, swing trading, and active regime capture.",
+    desc: "Technical indicators, multi-timeframe analysis, active stops, and quick position rotation.",
+    defaults: {
+      risk: "medium",
+      kpiTarget: "25",
+      horizon: 14,
+      frequency: "15m",
+      revenueSource: "momentum",
+      execMode: "autonomous",
+      autoApproveThreshold: "75",
+    },
+  },
+  {
+    id: "custom",
+    name: "Custom Preset",
+    tag: "CUSTOM",
+    tagColor: "#64748B", // Slate
+    class: "custom",
+    purpose: "Build your own strategy with full parameter control.",
+    bestFor: "Advanced users who want complete customization.",
+    desc: "Full access to all parameters including custom frequency, risk settings, and execution modes.",
+    defaults: {
+      risk: "medium",
+      kpiTarget: "12",
+      horizon: 30,
+      frequency: "1h",
+      revenueSource: "momentum",
+      execMode: "manual",
+      autoApproveThreshold: "50",
+    },
+  },
+];
+
 export const STRATEGY_TEMPLATES = [
   {
     id: "dca_accumulator",

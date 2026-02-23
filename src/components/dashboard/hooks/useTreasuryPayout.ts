@@ -57,13 +57,30 @@ export function useTreasuryPayout(params: UseTreasuryPayoutParams) {
 
   const attachCombinedTreasuryOutput = useCallback((txItem: any) => {
     if (!canCombineTreasuryWithAction(txItem)) return txItem;
+    
+    // The principal (agent deposit) should already be in txItem.to from the Dashboard
+    // We need to ensure the outputs array reflects: principal -> agentDeposit, platform fee -> treasury
     const baseOutputs = Array.isArray(txItem?.outputs) && txItem.outputs.length
       ? txItem.outputs
       : [{ to: txItem.to, amount_kas: txItem.amount_kas, tag: "primary" }];
+    
+    // Filter out any existing treasury outputs and rebuild with proper structure
+    const filteredBaseOutputs = baseOutputs.filter((o: any) => String(o?.tag || "").toLowerCase() !== "treasury");
+    
+    // Build outputs: principal (primary) goes to agent deposit address, treasury gets only the platform fee
     const normalizedOutputs = [
-      ...baseOutputs.filter((o: any) => String(o?.tag || "").toLowerCase() !== "treasury"),
-      { to: treasuryAddress, amount_kas: Number(Number(treasuryFeeKas || 0).toFixed(6)), tag: "treasury" },
+      ...filteredBaseOutputs.map((o: any) => ({
+        ...o,
+        tag: o.tag || "primary", // Ensure principal output is tagged
+      })),
+      // Treasury receives ONLY the platform fee, NOT the principal
+      { 
+        to: treasuryAddress, 
+        amount_kas: Number(Number(treasuryFeeKas || 0).toFixed(6)), 
+        tag: "treasury" 
+      },
     ];
+    
     return buildQueueTxItem({
       ...txItem,
       outputs: normalizedOutputs,
