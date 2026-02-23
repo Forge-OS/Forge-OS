@@ -110,115 +110,123 @@ export function PortfolioPanel({
           const actionColor = row.action === "ACCUMULATE" ? C.ok : row.action === "REDUCE" ? C.danger : C.warn;
           return (
             <div key={row.agentId} style={{ padding: "12px 14px", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    onClick={() => onSelectAgent?.(row.agentId)}
-                    style={{
-                      background: isActive ? C.aLow : "transparent",
-                      border: `1px solid ${isActive ? C.accent : C.border}`,
-                      color: isActive ? C.accent : C.text,
-                      borderRadius: 6,
-                      padding: "4px 8px",
-                      cursor: "pointer",
-                      fontSize: 11,
-                      ...mono,
-                    }}
-                  >
-                    {row.name}
-                  </button>
-                  <Badge text={row.enabled ? "ENABLED" : "DISABLED"} color={row.enabled ? C.ok : C.dim} />
-                  <Badge text={`TPL ${String(row.strategyTemplate || "custom").toUpperCase()}`} color={C.dim} />
-                  <Badge text={row.action} color={actionColor} />
-                  <Badge text={String(row.regime).replace(/_/g, " ")} color={C.accent} />
-                  <Badge text={`RISK ${row.risk}`} color={riskColor} />
-                  <Badge
-                    text={`CAL ${String(row.calibrationTier || "healthy").toUpperCase()} ${Number(row.calibrationHealth || 0).toFixed(2)}`}
-                    color={
-                      row.calibrationTier === "critical"
-                        ? C.danger
-                        : row.calibrationTier === "degraded" || row.calibrationTier === "watch"
-                        ? C.warn
-                        : C.ok
-                    }
-                  />
-                </div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <Badge text={`BUDGET ${row.budgetKas} KAS`} color={C.text} />
-                  <Badge text={`CYCLE CAP ${row.cycleCapKas} KAS`} color={C.ok} />
-                  <Badge text={`CAP ${Number(row.maxShareCapPct || 0).toFixed(1)}%`} color={C.dim} />
-                  <Badge text={`ALIGN x${Number(row.templateRegimeMultiplier || 1).toFixed(2)}`} color={Number(row.templateRegimeMultiplier || 1) >= 1 ? C.ok : C.warn} />
-                  {row.rebalanceDeltaKas !== 0 && (
-                    <Badge text={`REBAL ${row.rebalanceDeltaKas > 0 ? "+" : ""}${row.rebalanceDeltaKas} KAS`} color={row.rebalanceDeltaKas > 0 ? C.ok : C.warn} />
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8, marginBottom: 8 }}>
-                <div title="Allocator target share for this agent before risk/calibration/truth penalties and cycle caps." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Target Alloc</div>
-                  <div style={{ fontSize: 12, color: C.text, ...mono }}>{pct(row.targetPct, 1)}</div>
-                </div>
-                <div title="Actual budget share assigned after shared portfolio allocator weighting and caps." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Budget Share</div>
-                  <div style={{ fontSize: 12, color: C.text, ...mono }}>{pct(row.budgetPct, 1)}</div>
-                </div>
-                <div title="Relative allocator priority for this agent when conditions are favorable. Higher means more share before safety penalties." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Allocator Weight</div>
-                  <div style={{ fontSize: 12, color: C.text, ...mono }}>{row.riskWeight}</div>
-                </div>
-                <div title="Backlog pressure from queue items for this agent. Higher pressure can reduce new cycle allocation." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Queue Pressure</div>
-                  <div style={{ fontSize: 12, color: row.queuePressurePct > 20 ? C.warn : C.dim, ...mono }}>{pct(row.queuePressurePct, 1)}</div>
-                </div>
-                <div title="Signal confidence and feature data quality feeding the shared allocator quality score for this agent." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Confidence / DataQ</div>
-                  <div style={{ fontSize: 12, color: C.text, ...mono }}>{row.confidence} / {row.dataQuality}</div>
-                </div>
-                <div title="Truth quality (receipt consistency/coverage) and calibration health directly affect allocator routing and cycle caps." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Truth Quality / Cal</div>
-                  <div style={{ fontSize: 12, color: C.text, ...mono }}>{row.truthQualityScore} / {row.calibrationHealth}</div>
-                </div>
-              </div>
-
-              <details>
-                <summary style={{ cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: C.dim, ...mono, marginBottom: 8 }}>
-                  <Badge text="ADVANCED AGENT OVERRIDES" color={C.dim} />
-                  <span>Enable / allocation / allocator weight</span>
-                </summary>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.dim, ...mono }}>
-                      <input
-                        type="checkbox"
-                        checked={row.enabled}
-                        onChange={(e) => onAgentOverridePatch?.(row.agentId, { enabled: e.target.checked })}
-                      />
-                      ENABLED
-                    </label>
+              {/* Two-column half-boxes layout */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                {/* Left half: Agent info and badges */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                    <button
+                      onClick={() => onSelectAgent?.(row.agentId)}
+                      style={{
+                        background: isActive ? C.aLow : "transparent",
+                        border: `1px solid ${isActive ? C.accent : C.border}`,
+                        color: isActive ? C.accent : C.text,
+                        borderRadius: 6,
+                        padding: "6px 12px",
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        ...mono,
+                      }}
+                    >
+                      {row.name}
+                    </button>
+                    <Badge text={row.enabled ? "ENABLED" : "DISABLED"} color={row.enabled ? C.ok : C.dim} />
+                    <Badge text={`TPL ${String(row.strategyTemplate || "custom").toUpperCase()}`} color={C.dim} />
                   </div>
-                  <Inp
-                    label="Target Allocation %"
-                    value={String(row.targetPct)}
-                    onChange={(v: string) => onAgentOverridePatch?.(row.agentId, { targetAllocationPct: Math.max(0, Math.min(100, Number(v) || 0)) })}
-                    type="number"
-                    suffix="%"
-                    hint="Portfolio target share for this agent."
-                  />
-                  <Inp
-                    label="Allocator Weight"
-                    value={String(row.riskWeight)}
-                    onChange={(v: string) => onAgentOverridePatch?.(row.agentId, { riskWeight: Math.max(0, Math.min(10, Number(v) || 0)) })}
-                    type="number"
-                    hint="Relative allocator weight when signals are favorable."
-                  />
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    <Badge text={row.action} color={actionColor} />
+                    <Badge text={String(row.regime).replace(/_/g, " ")} color={C.accent} />
+                    <Badge text={`RISK ${row.risk}`} color={riskColor} />
+                    <Badge
+                      text={`CAL ${String(row.calibrationTier || "healthy").toUpperCase()} ${Number(row.calibrationHealth || 0).toFixed(2)}`}
+                      color={
+                        row.calibrationTier === "critical"
+                          ? C.danger
+                          : row.calibrationTier === "degraded" || row.calibrationTier === "watch"
+                          ? C.warn
+                          : C.ok
+                      }
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    <Badge text={`BUDGET ${row.budgetKas} KAS`} color={C.text} />
+                    <Badge text={`CYCLE CAP ${row.cycleCapKas} KAS`} color={C.ok} />
+                    <Badge text={`CAP ${Number(row.maxShareCapPct || 0).toFixed(1)}%`} color={C.dim} />
+                    <Badge text={`ALIGN x${Number(row.templateRegimeMultiplier || 1).toFixed(2)}`} color={Number(row.templateRegimeMultiplier || 1) >= 1 ? C.ok : C.warn} />
+                    {row.rebalanceDeltaKas !== 0 && (
+                      <Badge text={`REBAL ${row.rebalanceDeltaKas > 0 ? "+" : ""}${row.rebalanceDeltaKas} KAS`} color={row.rebalanceDeltaKas > 0 ? C.ok : C.warn} />
+                    )}
+                  </div>
+                  <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {(row.notes || []).map((note: string) => (
+                      <Badge key={`${row.agentId}:${note}`} text={note.toUpperCase()} color={C.warn} />
+                    ))}
+                  </div>
                 </div>
-              </details>
 
-              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {(row.notes || []).map((note: string) => (
-                  <Badge key={`${row.agentId}:${note}`} text={note.toUpperCase()} color={C.warn} />
-                ))}
+                {/* Right half: Metrics and controls */}
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                    <div title="Allocator target share for this agent before risk/calibration/truth penalties and cycle caps." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Target Alloc</div>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600, ...mono }}>{pct(row.targetPct, 1)}</div>
+                    </div>
+                    <div title="Actual budget share assigned after shared portfolio allocator weighting and caps." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Budget Share</div>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600, ...mono }}>{pct(row.budgetPct, 1)}</div>
+                    </div>
+                    <div title="Relative allocator priority for this agent when conditions are favorable. Higher means more share before safety penalties." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Allocator Weight</div>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600, ...mono }}>{row.riskWeight}</div>
+                    </div>
+                    <div title="Backlog pressure from queue items for this agent. Higher pressure can reduce new cycle allocation." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Queue Pressure</div>
+                      <div style={{ fontSize: 13, color: row.queuePressurePct > 20 ? C.warn : C.text, fontWeight: 600, ...mono }}>{pct(row.queuePressurePct, 1)}</div>
+                    </div>
+                    <div title="Signal confidence and feature data quality feeding the shared allocator quality score for this agent." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Confidence / DataQ</div>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600, ...mono }}>{row.confidence} / {row.dataQuality}</div>
+                    </div>
+                    <div title="Truth quality (receipt consistency/coverage) and calibration health directly affect allocator routing and cycle caps." style={{ background: C.s2, borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.dim, ...mono, marginBottom: 2 }}>Truth Quality / Cal</div>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600, ...mono }}>{row.truthQualityScore} / {row.calibrationHealth}</div>
+                    </div>
+                  </div>
+
+                  <details>
+                    <summary style={{ cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: C.dim, ...mono, marginBottom: 8 }}>
+                      <Badge text="ADVANCED OVERRIDES" color={C.dim} />
+                    </summary>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.dim, ...mono }}>
+                          <input
+                            type="checkbox"
+                            checked={row.enabled}
+                            onChange={(e) => onAgentOverridePatch?.(row.agentId, { enabled: e.target.checked })}
+                          />
+                          ENABLED
+                        </label>
+                      </div>
+                      <Inp
+                        label="Target Alloc %"
+                        value={String(row.targetPct)}
+                        onChange={(v: string) => onAgentOverridePatch?.(row.agentId, { targetAllocationPct: Math.max(0, Math.min(100, Number(v) || 0)) })}
+                        type="number"
+                        suffix="%"
+                        hint="Portfolio target share."
+                      />
+                      <Inp
+                        label="Weight"
+                        value={String(row.riskWeight)}
+                        onChange={(v: string) => onAgentOverridePatch?.(row.agentId, { riskWeight: Math.max(0, Math.min(10, Number(v) || 0)) })}
+                        type="number"
+                        hint="Allocator weight."
+                      />
+                    </div>
+                  </details>
+                </div>
               </div>
             </div>
           );
