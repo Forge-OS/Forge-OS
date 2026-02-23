@@ -53,7 +53,6 @@ const PerfChart = lazy(() => import("./PerfChart").then((m) => ({ default: m.Per
 const IntelligencePanel = lazy(() =>
   import("./IntelligencePanel").then((m) => ({ default: m.IntelligencePanel }))
 );
-const TreasuryPanel = lazy(() => import("./TreasuryPanel").then((m) => ({ default: m.TreasuryPanel })));
 const PortfolioPanel = lazy(() => import("./PortfolioPanel").then((m) => ({ default: m.PortfolioPanel })));
 const PnlAttributionPanel = lazy(() =>
   import("./PnlAttributionPanel").then((m) => ({ default: m.PnlAttributionPanel }))
@@ -683,23 +682,171 @@ const [viewportWidth, setViewportWidth] = useState(
     {k:"attribution",l:"ATTRIBUTION"},
     {k:"alerts",l:"ALERTS"},
     {k:"queue",l:`QUEUE${pendingCount>0?` (${pendingCount})`:""}`},
-    {k:"treasury",l:"TREASURY"},
     {k:"wallet",l:"WALLET"},
     {k:"log",l:"LOG"},
     {k:"controls",l:"CONTROLS"},
   ];
 
+  // Track previous pending count to detect state changes
+  const lastPendingCountRef = useRef(0);
+  
   useEffect(() => {
-    if (pendingCount <= 0) return;
+    const threshold = alertConfig?.queuePendingThreshold || 3;
+    const prevCount = lastPendingCountRef.current;
+    const currentCount = pendingCount;
+    
+    // Only alert when:
+    // 1. pendingCount exceeds threshold AND
+    // 2. Either it's a new threshold breach (count went from below to above threshold)
+    //    OR count increased significantly since last alert
+    const wasBelowThreshold = prevCount < threshold;
+    const isAboveThreshold = currentCount >= threshold;
+    const increasedSignificantly = currentCount > prevCount && (currentCount - prevCount) >= Math.max(1, Math.floor(threshold / 2));
+    
+    // Update the ref
+    lastPendingCountRef.current = currentCount;
+    
+    // Don't alert if below threshold or count decreased
+    if (!isAboveThreshold || currentCount <= prevCount) return;
+    
+    // Only alert on significant state changes
+    if (wasBelowThreshold || increasedSignificantly) {
+      void sendAlertEvent({
+        type: "queue_pending",
+        key: `queue_pending_count:${String(agent?.agentId || agent?.name || "agent")}:${String(threshold)}`,
+        title: `${agent?.name || "Agent"} queue backlog alert`,
+        message: `${currentCount} transaction${currentCount > 1 ? "s" : ""} awaiting wallet approval (threshold: ${threshold}).`,
+        severity: currentCount >= threshold * 2 ? "danger" : currentCount >= threshold ? "warn" : "info",
+        meta: { 
+          pending_count: currentCount,
+          threshold: threshold,
+          prev_count: prevCount,
+        },
+      });
+    }
+  }, [agent?.agentId, agent?.name, pendingCount, alertConfig?.queuePendingThreshold, sendAlertEvent]);
+
+  // Low balance alert
+  const lastBalanceAlertRef = useRef(0);
+  
+  useEffect(() => {
+    const threshold = alertConfig?.lowBalanceThreshold || 100;
+    const currentBalance = Number(kasData?.walletKas || 0);
+    const now = Date.now();
+    
+    // Only alert if balance is below threshold
+    if (currentBalance >= threshold || currentBalance <= 0) return;
+    
+    // Don't alert too frequently (at most once per hour for low balance)
+    if (now - lastBalanceAlertRef.current < 3600000) return;
+    
+    lastBalanceAlertRef.current = now;
+    
     void sendAlertEvent({
-      type: "queue_pending",
-      key: `queue_pending_count:${String(agent?.agentId || agent?.name || "agent")}`,
-      title: `${agent?.name || "Agent"} has pending signatures`,
-      message: `${pendingCount} transaction${pendingCount > 1 ? "s" : ""} awaiting wallet approval.`,
-      severity: pendingCount >= 3 ? "warn" : "info",
-      meta: { pending_count: pendingCount },
+      type: "low_balance",
+      key: `low_balance:${String(agent?.agentId || agent?.name || "agent")}:${String(threshold)}`,
+      title: `${agent?.name || "Agent"} low balance warning`,
+      message: `Wallet balance ${currentBalance.toFixed(2)} KAS is below threshold ${threshold} KAS.`,
+      severity: currentBalance < threshold * 0.5 ? "danger" : "warn",
+      meta: { 
+        balance_kas: currentBalance,
+        threshold_kas: threshold,
+      },
     });
-  }, [agent?.agentId, agent?.name, pendingCount, sendAlertEvent]);
+  }, [agent?.agentId, agent?.name, kasData?.walletKas, alertConfig?.lowBalanceThreshold, sendAlertEvent]);
+
+  // Track tx failures and confirmation timeouts
+  const lastTxFailureAlertRef = useRef<Record<string, number>>({});
+  
+  useEffect(() => {
+    if (!queue || !Array.isArray(queue)) return;
+    
+    const now = Date.now();
+    const alertCooldownMs = 300000; // 5 minutes between alerts for same tx
+    
+    for (const item of queue) {
+      if (!item?.txid) continue;
+      
+      const txid = String(item.txid);
+      const failureReason = item?.failure_reason;
+      const receiptLifecycle = item?.receipt_lifecycle;
+      
+      // Check for confirmation timeout
+      if (receiptLifecycle === "timeout" && failureReason === "confirmation_timeout") {
+        const lastAlert = lastTxFailureAlertRef.current[`${txid}:timeout`] || 0;
+        if (now - lastAlert < alertCooldownMs) continue;
+        
+        lastTxFailureAlertRef.current[`${txid}:timeout`] = now;
+        
+        void sendAlertEvent({
+          type: "confirmation_timeout",
+          key: `confirmation_timeout:${String(agent?.agentId || agent?.name || "agent")}:${txid}`,
+          title: `${agent?.name || "Agent"} transaction confirmation timeout`,
+          message: `Transaction ${txid.slice(0, 16)}... failed to confirm within expected time (${item?.receipt_attempts || 0} attempts).`,
+          severity: "warn",
+          meta: { 
+            txid: txid,
+            attempts: item?.receipt_attempts || 0,
+            amount_kas: item?.amount_kas,
+          },
+        });
+      }
+      
+      // Check for chain rejection
+      if (receiptLifecycle === "failed" && (failureReason === "chain_rejected" || failureReason === "backend_receipt_failed")) {
+        const lastAlert = lastTxFailureAlertRef.current[`${txid}:failed`] || 0;
+        if (now - lastAlert < alertCooldownMs) continue;
+        
+        lastTxFailureAlertRef.current[`${txid}:failed`] = now;
+        
+        void sendAlertEvent({
+          type: "tx_failure",
+          key: `tx_failure:${String(agent?.agentId || agent?.name || "agent")}:${txid}`,
+          title: `${agent?.name || "Agent"} transaction failed`,
+          message: `Transaction ${txid.slice(0, 16)}... was rejected (reason: ${failureReason || "unknown"}).`,
+          severity: "danger",
+          meta: { 
+            txid: txid,
+            failure_reason: failureReason,
+            amount_kas: item?.amount_kas,
+            metaKind: item?.metaKind,
+          },
+        });
+      }
+    }
+  }, [agent?.agentId, agent?.name, queue, sendAlertEvent]);
+
+  // Network disconnect alert
+  const lastNetworkAlertRef = useRef(0);
+  
+  useEffect(() => {
+    // Alert when network goes from connected to disconnected
+    const wasConnected = lastNetworkAlertRef.current > 0;
+    const isDisconnected = !liveConnected;
+    
+    if (wasConnected && isDisconnected) {
+      const now = Date.now();
+      // Only alert once per disconnect event
+      if (now - lastNetworkAlertRef.current < 60000) return;
+      
+      lastNetworkAlertRef.current = now;
+      
+      void sendAlertEvent({
+        type: "system",
+        key: `network_disconnect:${String(agent?.agentId || agent?.name || "agent")}`,
+        title: `${agent?.name || "Agent"} network disconnected`,
+        message: `Kaspa DAG feed disconnected. Live execution may be affected.`,
+        severity: "warn",
+        meta: { 
+          network: DEFAULT_NETWORK,
+          wasConnected: true,
+        },
+      });
+    } else if (liveConnected) {
+      // Reset when connected again
+      lastNetworkAlertRef.current = 1;
+    }
+  }, [agent?.agentId, agent?.name, liveConnected, sendAlertEvent]);
 
   return(
     <div style={{maxWidth:1460, margin:"0 auto", padding:isMobile ? "14px 14px 22px" : "22px 24px 34px"}}>
@@ -753,6 +900,170 @@ const [viewportWidth, setViewportWidth] = useState(
               <Card key={r.l} p={14}><Label>{r.l}</Label><div style={{fontSize:18, color:r.c, fontWeight:700, ...mono, marginBottom:2}}>{r.v}</div><div style={{fontSize:11, color:C.dim}}>{r.s}</div></Card>
             ))}
           </div>
+          
+          {/* AI Trading Status - Prominent Live Activity Display */}
+          <Card p={0} style={{marginBottom:12, background: lastDecision ? `linear-gradient(135deg, ${C.s2} 0%, ${C.s1} 100%)` : C.s1, border: `1px solid ${lastDecision ? C.accent + '30' : C.border}`}}>
+            <div style={{padding: "16px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom: `1px solid ${C.border}`}}>
+              <div style={{display:"flex", alignItems:"center", gap:10}}>
+                <div style={{width:10, height:10, borderRadius:"50%", background: status === "RUNNING" && lastDecision ? C.ok : status === "RUNNING" ? C.warn : C.danger, boxShadow: status === "RUNNING" && lastDecision ? `0 0 8px ${C.ok}` : 'none'}} />
+                <span style={{fontSize:13, color:C.text, fontWeight:700, ...mono}}>AI TRADING STATUS</span>
+              </div>
+              <div style={{display:"flex", gap:6}}>
+                <Badge 
+                  text={status === "RUNNING" ? "AGENT ACTIVE" : status === "PAUSED" ? "PAUSED" : "STOPPED"} 
+                  color={status === "RUNNING" ? C.ok : status === "PAUSED" ? C.warn : C.danger}
+                  dot
+                />
+                <Badge 
+                  text={lastDecision?.action || "NO DECISIONS"} 
+                  color={lastDecision?.action === "ACCUMULATE" ? C.ok : lastDecision?.action === "REDUCE" ? C.danger : lastDecision?.action === "HOLD" ? C.warn : C.dim}
+                />
+              </div>
+            </div>
+            
+            {lastDecision ? (
+              <div style={{padding: "16px 20px"}}>
+                <div style={{display:"grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap:12, marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>Decision Source</div>
+                    <div style={{fontSize:14, color: lastDecisionSource === "hybrid-ai" ? C.accent : lastDecisionSource === "ai" ? C.ok : C.text, fontWeight:700, ...mono}}>
+                      {lastDecisionSource === "hybrid-ai" ? "🤖 AI + QUANT" : lastDecisionSource === "ai" ? "🤖 AI" : lastDecisionSource === "quant-core" ? "📊 QUANT" : "📊 FALLBACK"}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>Confidence</div>
+                    <div style={{fontSize:14, color: lastDecision.confidence_score >= 0.8 ? C.ok : lastDecision.confidence_score >= 0.5 ? C.warn : C.danger, fontWeight:700, ...mono}}>
+                      {(lastDecision.confidence_score * 100).toFixed(0)}%
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>Kelly Sizing</div>
+                    <div style={{fontSize:14, color:C.accent, fontWeight:700, ...mono}}>
+                      {(lastDecision.kelly_fraction * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>Monte Carlo Win</div>
+                    <div style={{fontSize:14, color:C.ok, fontWeight:700, ...mono}}>
+                      {lastDecision.monte_carlo_win_pct}%
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Mini Rationale */}
+                <div style={{background:C.s2, borderRadius:6, padding: "10px 14px", marginBottom:12}}>
+                  <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>LATEST AI RATIONALE</div>
+                  <div style={{fontSize:13, color:C.text, ...mono, lineHeight:1.5}}>
+                    {lastDecision.rationale?.slice(0, 200)}{lastDecision.rationale?.length > 200 ? "..." : ""}
+                  </div>
+                </div>
+                
+                {/* Regime & Risk */}
+                <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+                  {lastDecision.quant_metrics?.regime && (
+                    <Badge 
+                      text={`REGIME: ${String(lastDecision.quant_metrics.regime).replace(/_/g, " ")}`} 
+                      color={lastDecision.quant_metrics.regime === "RISK_ON" ? C.ok : lastDecision.quant_metrics.regime === "RISK_OFF" ? C.danger : C.warn}
+                    />
+                  )}
+                  <Badge 
+                    text={`RISK: ${lastDecision.risk_score?.toFixed(2)}`} 
+                    color={lastDecision.risk_score <= 0.4 ? C.ok : lastDecision.risk_score <= 0.7 ? C.warn : C.danger}
+                  />
+                  <Badge 
+                    text={`CAPITAL: ${lastDecision.capital_allocation_kas} KAS`} 
+                    color={C.text}
+                  />
+                  {lastDecision.quant_metrics?.ai_overlay_applied && (
+                    <Badge text="🧠 AI OVERLAY ACTIVE" color={C.accent} />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{padding: "24px 20px", textAlign:"center"}}>
+                <div style={{fontSize:14, color:C.dim, ...mono, marginBottom:8}}>No AI decisions yet</div>
+                <div style={{fontSize:12, color:C.dim}}>Run a quant cycle to generate AI trading signals</div>
+                <Btn onClick={runCycle} disabled={loading || status !== "RUNNING"} style={{marginTop:12, padding:"10px 24px"}}>
+                  {loading ? "PROCESSING..." : "RUN QUANT CYCLE"}
+                </Btn>
+              </div>
+            )}
+          </Card>
+          
+          {/* On-Chain Activity - Recent Transactions with Explorer Links */}
+          {queue && queue.length > 0 && (
+            <Card p={0} style={{marginBottom:12, border: `1px solid ${C.ok}30`}}>
+              <div style={{padding: "14px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom: `1px solid ${C.border}`, background: `${C.ok}08`}}>
+                <div style={{display:"flex", alignItems:"center", gap:10}}>
+                  <span style={{fontSize:13, color:C.ok, fontWeight:700, ...mono}}>⛓️ ON-CHAIN ACTIVITY</span>
+                </div>
+                <div style={{display:"flex", gap:6}}>
+                  <Badge 
+                    text={`${queue.filter((q:any)=>q.status === "confirmed").length} CONFIRMED`} 
+                    color={C.ok}
+                  />
+                  <Badge 
+                    text={`${queue.filter((q:any)=>q.status === "signed" || q.status === "broadcasted").length} PENDING`} 
+                    color={C.warn}
+                  />
+                </div>
+              </div>
+              
+              <div style={{maxHeight: 200, overflowY: "auto"}}>
+                {queue.slice(0, 5).map((item: any, i: number) => {
+                  const isConfirmed = item.receipt_lifecycle === "confirmed";
+                  const isPending = item.status === "signed" || item.status === "broadcasted" || item.status === "pending";
+                  return (
+                    <div key={i} style={{
+                      display: "grid", 
+                      gridTemplateColumns: isMobile ? "1fr" : "80px 80px 1fr 100px 80px", 
+                      gap: 8, 
+                      padding: "12px 20px", 
+                      borderBottom: `1px solid ${C.border}`,
+                      background: isConfirmed ? `${C.ok}08` : isPending ? `${C.warn}08` : C.s1
+                    }}>
+                      <div>
+                        <div style={{fontSize:10, color:C.dim, ...mono}}>ACTION</div>
+                        <div style={{fontSize:12, color: item.type === "ACCUMULATE" ? C.ok : item.type === "REDUCE" ? C.danger : C.text, fontWeight:700, ...mono}}>
+                          {item.type}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10, color:C.dim, ...mono}}>AMOUNT</div>
+                        <div style={{fontSize:12, color:C.text, fontWeight:700, ...mono}}>
+                          {item.amount_kas} KAS
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10, color:C.dim, ...mono}}>TXID</div>
+                        <div style={{fontSize:11, color:C.accent, ...mono, wordBreak: "break-all"}}>
+                          {item.txid ? `${item.txid.slice(0, 20)}...` : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10, color:C.dim, ...mono}}>STATUS</div>
+                        <Badge 
+                          text={isConfirmed ? "CONFIRMED ✓" : isPending ? "PENDING" : item.status?.toUpperCase() || "—"} 
+                          color={isConfirmed ? C.ok : isPending ? C.warn : C.dim}
+                        />
+                      </div>
+                      <div>
+                        {item.txid && (
+                          <ExtLink href={`${EXPLORER}/txs/${item.txid}`} label="VERIFY ↗"/>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div style={{padding: "10px 20px", borderTop: `1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>Click "VERIFY ↗" to view transaction on Kaspa Explorer</span>
+                <Btn onClick={() => setTab("queue")} variant="ghost" size="sm">VIEW ALL TRANSACTIONS →</Btn>
+              </div>
+            </Card>
+          )}
+          
           <Card p={16} style={{marginBottom:12}}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:8}}>
               <Label>Mission Control</Label>
@@ -888,12 +1199,7 @@ const [viewportWidth, setViewportWidth] = useState(
           receiptConsistencyMetrics={receiptConsistencyMetrics}
         />
       )}
-      {tab==="treasury" && (
-        <Suspense fallback={<Card p={18}><Label>Treasury</Label><div style={{fontSize:12,color:C.dim}}>Loading treasury panel...</div></Card>}>
-          <TreasuryPanel log={log} agentCapital={agent.capitalLimit}/>
-        </Suspense>
-      )}
-      {tab==="wallet" && <WalletPanel agent={agent} wallet={wallet}/>}
+      {tab==="wallet" && <WalletPanel agent={agent} wallet={wallet} kasData={kasData}/>}
 
       {/* ── LOG ── */}
       {tab==="log" && (

@@ -1,4 +1,4 @@
-export type AlertEventType = "risk_event" | "queue_pending" | "ai_outage" | "regime_shift" | "system";
+export type AlertEventType = "risk_event" | "queue_pending" | "ai_outage" | "regime_shift" | "system" | "tx_failure" | "confirmation_timeout" | "low_balance" | "network_disconnect";
 
 export type AlertConfig = {
   version: number;
@@ -10,6 +10,8 @@ export type AlertConfig = {
   telegramChatId: string;
   emailWebhookUrl: string;
   eventToggles: Record<AlertEventType, boolean>;
+  queuePendingThreshold: number;
+  lowBalanceThreshold: number;
 };
 
 export type AlertEvent = {
@@ -21,6 +23,8 @@ export type AlertEvent = {
   scope?: string;
   ts?: number;
   meta?: Record<string, any>;
+  repeatCount?: number;
+  escalatedFrom?: "info" | "warn";
 };
 
 const STORAGE_PREFIX = "forgeos.alerts.v1";
@@ -44,7 +48,13 @@ const DEFAULT_CONFIG: AlertConfig = {
     ai_outage: true,
     regime_shift: true,
     system: false,
+    tx_failure: true,
+    confirmation_timeout: true,
+    low_balance: true,
+    network_disconnect: true,
   },
+  queuePendingThreshold: 3,
+  lowBalanceThreshold: 100,
 };
 
 function normalizeScope(scope: string) {
@@ -92,6 +102,8 @@ function sanitizeConfig(raw: any): AlertConfig {
     telegramChatId: String(raw?.telegramChatId || "").trim().slice(0, 120),
     emailWebhookUrl: sanitizeUrl(raw?.emailWebhookUrl),
     eventToggles: toggles,
+    queuePendingThreshold: clamp(finite(raw?.queuePendingThreshold, DEFAULT_CONFIG.queuePendingThreshold), 1, 50),
+    lowBalanceThreshold: clamp(finite(raw?.lowBalanceThreshold, DEFAULT_CONFIG.lowBalanceThreshold), 0, 100000),
   };
 }
 
@@ -158,19 +170,86 @@ function shouldThrottle(scope: string, cfg: AlertConfig, evt: AlertEvent) {
 function alertText(evt: AlertEvent) {
   const severity = String(evt.severity || "info").toUpperCase();
   const ts = new Date(evt.ts || Date.now()).toISOString();
-  const header = `[ForgeOS][${severity}] ${evt.title}`;
-  const body = `${evt.message}${evt.meta ? `\nmeta: ${JSON.stringify(evt.meta)}` : ""}`;
-  return `${header}\n${body}\n${ts}`.slice(0, MAX_MSG);
+  
+  // Build enhanced header with escalation info
+  let header = "[ForgeOS][" + severity + "] " + evt.title;
+  if (evt.repeatCount && evt.repeatCount > 1) {
+    header = "[ForgeOS][" + severity + "] " + evt.title + " (" + evt.repeatCount + "x)";
+  }
+  if (evt.escalatedFrom) {
+    header += " [ESCALATED from " + evt.escalatedFrom.toUpperCase() + "]";
+  }
+  
+  // Build enhanced body with all metadata
+  let body = evt.message;
+  if (evt.meta) {
+    const metaLines: string[] = [];
+    for (const [k, v] of Object.entries(evt.meta)) {
+      if (v !== undefined && v !== null) {
+        metaLines.push(k + "=" + (typeof v === "object" ? JSON.stringify(v) : v));
+      }
+    }
+    if (metaLines.length > 0) {
+      body += "\n" + metaLines.join(" | ");
+    }
+  }
+  
+  return (header + "\n" + body + "\n" + ts).slice(0, MAX_MSG);
 }
 
+const ALERT_SERVER_URL = typeof window !== "undefined" 
+  ? (window as any).__forgeosAlertServerUrl || "" 
+  : "";
+
+// CORS proxy for direct webhook calls (free, public proxy)
+const CORS_PROXY = "https://corsproxy.io/?";
+
 async function postJson(url: string, body: any) {
-  const res = await fetch(url, {
+  // Use CORS proxy to avoid CORS issues when calling webhooks directly from browser
+  const proxyUrl = url.startsWith("http") ? CORS_PROXY + encodeURIComponent(url) : url;
+  const res = await fetch(proxyUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`alert_webhook_${res.status}`);
+  if (!res.ok) throw new Error("alert_webhook_" + res.status);
   return true;
+}
+
+async function sendViaServer(scope: string, evt: AlertEvent, config: AlertConfig): Promise<{sent: boolean, sentCount?: number, failures?: string[]}> {
+  if (!ALERT_SERVER_URL) {
+    // Fallback to direct webhooks if no server URL configured
+    return { sent: false, failures: ["no_server_configured"] };
+  }
+  
+  try {
+    const response = await fetch(`${ALERT_SERVER_URL}/v1/alerts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope,
+        type: evt.type,
+        key: evt.key,
+        title: evt.title,
+        message: evt.message,
+        severity: evt.severity,
+        ts: evt.ts,
+        meta: evt.meta,
+        repeatCount: evt.repeatCount,
+        escalatedFrom: evt.escalatedFrom,
+        config,
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "unknown" }));
+      throw new Error(error.error || "server_error");
+    }
+    
+    return await response.json();
+  } catch (error: any) {
+    throw new Error("server_" + (error.message || "unknown"));
+  }
 }
 
 async function sendDiscord(url: string, evt: AlertEvent) {
@@ -192,7 +271,7 @@ async function sendTelegram(botApiUrl: string, chatId: string, evt: AlertEvent) 
 async function sendEmailWebhook(url: string, evt: AlertEvent) {
   if (!url) return false;
   await postJson(url, {
-    subject: `[ForgeOS] ${evt.title}`,
+    subject: "[ForgeOS] " + evt.title,
     message: alertText(evt),
     event: evt,
   });
@@ -210,23 +289,37 @@ export async function emitAlert(scope: string, evt: AlertEvent, overrideConfig?:
   if (!hasAnyRoute) return { sent: false, reason: "no_routes_configured" as const };
   if (shouldThrottle(scope, cfg, evt)) return { sent: false, reason: "throttled" as const };
 
+  // Try server-side forwarding first if configured
+  if (ALERT_SERVER_URL) {
+    try {
+      const result = await sendViaServer(scope, evt, cfg);
+      if (result.sent) {
+        return { sent: true, sentCount: result.sentCount || 1, failures: result.failures };
+      }
+      // If server returned but couldn't send, fall through to direct
+    } catch (e) {
+      // Server failed, fall through to direct webhooks
+    }
+  }
+
+  // Fallback: direct webhook calls from browser
   const failures: string[] = [];
   let sentCount = 0;
 
   try {
     if (await sendDiscord(cfg.discordWebhookUrl, evt)) sentCount += 1;
   } catch (e: any) {
-    failures.push(`discord:${e?.message || "send_failed"}`);
+    failures.push("discord:" + (e?.message || "send_failed"));
   }
   try {
     if (await sendTelegram(cfg.telegramBotApiUrl, cfg.telegramChatId, evt)) sentCount += 1;
   } catch (e: any) {
-    failures.push(`telegram:${e?.message || "send_failed"}`);
+    failures.push("telegram:" + (e?.message || "send_failed"));
   }
   try {
     if (await sendEmailWebhook(cfg.emailWebhookUrl, evt)) sentCount += 1;
   } catch (e: any) {
-    failures.push(`email:${e?.message || "send_failed"}`);
+    failures.push("email:" + (e?.message || "send_failed"));
   }
 
   if (sentCount === 0 && failures.length) {
@@ -234,3 +327,4 @@ export async function emitAlert(scope: string, evt: AlertEvent, overrideConfig?:
   }
   return { sent: sentCount > 0, sentCount, failures };
 }
+

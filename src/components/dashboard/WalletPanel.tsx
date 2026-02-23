@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { ALLOWED_ADDRESS_PREFIXES, DEFAULT_NETWORK, EXPLORER, KAS_API, NET_FEE, NETWORK_LABEL, RESERVE } from "../../constants";
-import { fmt, isKaspaAddress } from "../../helpers";
-import { kasBalance, kasUtxos } from "../../api/kaspaApi";
+import { fmt, isKaspaAddress, shortAddr } from "../../helpers";
+import { kasBalance, kasPrice, kasUtxos } from "../../api/kaspaApi";
 import { C, mono } from "../../tokens";
 import { WalletAdapter } from "../../wallet/WalletAdapter";
 import { SigningModal } from "../SigningModal";
 import { Badge, Btn, Card, ExtLink, Inp, Label } from "../ui";
 
-export function WalletPanel({agent, wallet}: any) {
+export function WalletPanel({agent, wallet, kasData}: any) {
   const [liveKas, setLiveKas] = useState(null as any);
   const [utxos, setUtxos] = useState([] as any[]);
   const [loading, setLoading] = useState(false);
@@ -21,6 +21,9 @@ export function WalletPanel({agent, wallet}: any) {
     typeof window !== "undefined" ? window.innerWidth : 1200
   );
 
+  // Get price from kasData or fetch fresh
+  const priceUsd = Number(kasData?.priceUsd || 0);
+  
   const refresh = useCallback(async()=>{
     setLoading(true); setErr(null);
     try{
@@ -47,6 +50,11 @@ export function WalletPanel({agent, wallet}: any) {
   const maxSendKas = Math.max(0, bal - RESERVE - NET_FEE);
   const maxSend = maxSendKas.toFixed(4);
   const isMobile = viewportWidth < 760;
+  
+  // Calculate USD value
+  const balanceUsd = priceUsd > 0 ? (bal * priceUsd) : null;
+  const spendableKas = Math.max(0, bal - RESERVE - NET_FEE);
+  const spendableUsd = priceUsd > 0 ? (spendableKas * priceUsd) : null;
 
   const initiateWithdraw = () => {
     const requested = Number(withdrawAmt);
@@ -61,36 +69,146 @@ export function WalletPanel({agent, wallet}: any) {
   };
   const handleSigned = () => {setSigningTx(null); setWithdrawTo(""); setWithdrawAmt(""); setNote("");};
 
+  // Format currency
+  const fmtUsd = (v: number | null) => {
+    if (v === null) return "—";
+    return v >= 1 ? `$${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : `$${v.toFixed(4)}`;
+  };
+
   return(
     <div>
       {signingTx && <SigningModal tx={signingTx} wallet={wallet} onSign={handleSigned} onReject={()=>setSigningTx(null)}/>}
-      <Card p={20} style={{marginBottom:12}}>
-        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14}}>
-          <div style={{flex:1, minWidth:0}}>
-            <Label>Connected Wallet — {NETWORK_LABEL}</Label>
-            <div style={{fontSize:12, color:C.accent, ...mono, wordBreak:"break-all", marginBottom:10}}>{wallet?.address || "—"}</div>
-            <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-              <Btn onClick={()=>navigator.clipboard?.writeText(wallet?.address || "")} variant="ghost" size="sm">COPY</Btn>
-              <ExtLink href={`${EXPLORER}/addresses/${wallet?.address}`} label="EXPLORER ↗"/>
+      
+      {/* PRO MINI WALLET - Enhanced Header */}
+      <Card p={0} style={{marginBottom:16, background:`linear-gradient(135deg, ${C.s2} 0%, ${C.s1} 100%)`, border:`1px solid ${C.accent}30`, overflow:"hidden"}}>
+        {/* Gradient accent bar */}
+        <div style={{height:4, background:`linear-gradient(90deg, ${C.accent}, ${C.purple})`}} />
+        
+        <div style={{padding:20}}>
+          {/* Wallet Header */}
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16}}>
+            <div style={{display:"flex", alignItems:"center", gap:10}}>
+              <div style={{
+                width:42, height:42, borderRadius:10, 
+                background:`linear-gradient(135deg, ${C.accent}20, ${C.purple}20)`,
+                border:`1px solid ${C.accent}40`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:18
+              }}>
+                💎
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.dim, ...mono, letterSpacing:"0.08em"}}>MINI WALLET</div>
+                <div style={{fontSize:13, color:C.text, fontWeight:600, ...mono}}>
+                  {wallet?.provider === "kasware" ? "KasWare" : 
+                   wallet?.provider === "kastle" ? "Kastle" :
+                   wallet?.provider === "ghost" ? "Ghost" :
+                   wallet?.provider?.toUpperCase() || "WALLET"}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex", gap:6, alignItems:"center"}}>
+              <Badge
+                text={wallet?.provider==="demo"?"DEMO":String(wallet?.provider || "").toUpperCase()}
+                color={["kasware","kastle","ghost"].includes(String(wallet?.provider || "")) ? C.ok : C.warn}
+                dot
+              />
             </div>
           </div>
-          <div style={{display:"flex", gap:6, alignItems:"center", flexShrink:0, marginLeft:14}}>
-            <Badge
-              text={wallet?.provider==="demo"?"DEMO":wallet?.provider?.toUpperCase()||"—"}
-              color={["kasware","kastle","ghost"].includes(String(wallet?.provider || "")) ? C.ok : C.warn}
-              dot
-            />
-            <Btn onClick={refresh} disabled={loading} size="sm" variant="ghost">{loading?"...":"REFRESH"}</Btn>
+          
+          {/* Balance Display - PRO STYLE */}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11, color:C.dim, ...mono, marginBottom:4}}>TOTAL BALANCE</div>
+            <div style={{display:"flex", alignItems:"baseline", gap:12, flexWrap:"wrap"}}>
+              <span style={{fontSize:36, color:C.accent, fontWeight:700, ...mono, lineHeight:1.1}}>
+                {liveKas !== null ? fmt(liveKas, 4) : "—"}
+              </span>
+              <span style={{fontSize:18, color:C.dim, ...mono}}>KAS</span>
+              {balanceUsd !== null && (
+                <span style={{fontSize:18, color:C.text, ...mono, marginLeft:4}}>
+                  ≈ {fmtUsd(balanceUsd)}
+                </span>
+              )}
+            </div>
+          </div>
+          
+          {/* Stats Grid */}
+          <div style={{display:"grid", gridTemplateColumns:isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap:12, marginBottom:16}}>
+            <div style={{background:C.dLow, borderRadius:8, padding:12}}>
+              <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>SPENDABLE</div>
+              <div style={{fontSize:16, color:C.ok, fontWeight:700, ...mono}}>
+                {liveKas !== null ? fmt(spendableKas, 4) : "—"} <span style={{fontSize:11, color:C.dim}}>KAS</span>
+              </div>
+              {spendableUsd !== null && (
+                <div style={{fontSize:11, color:C.dim, ...mono}}>{fmtUsd(spendableUsd)}</div>
+              )}
+            </div>
+            <div style={{background:C.dLow, borderRadius:8, padding:12}}>
+              <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>RESERVE</div>
+              <div style={{fontSize:16, color:C.text, fontWeight:700, ...mono}}>
+                {RESERVE} <span style={{fontSize:11, color:C.dim}}>KAS</span>
+              </div>
+            </div>
+            <div style={{background:C.dLow, borderRadius:8, padding:12}}>
+              <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>KAS PRICE</div>
+              <div style={{fontSize:16, color:C.text, fontWeight:700, ...mono}}>
+                {priceUsd > 0 ? `$${priceUsd.toFixed(4)}` : "—"}
+              </div>
+            </div>
+          </div>
+          
+          {/* Address & Actions */}
+          <div style={{background:C.s2, borderRadius:8, padding:12, marginBottom:12}}>
+            <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:6}}>CONNECTED ADDRESS</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <div style={{fontSize:12, color:C.accent, ...mono, wordBreak:"break-all", flex:1, marginRight:12}}>
+                {wallet?.address ? shortAddr(wallet.address) : "—"}
+              </div>
+              <div style={{display:"flex", gap:6}}>
+                <Btn onClick={()=>navigator.clipboard?.writeText(wallet?.address || "")} variant="ghost" size="sm">COPY</Btn>
+                <ExtLink href={`${EXPLORER}/addresses/${wallet?.address}`} label="EXPLORER ↗"/>
+              </div>
+            </div>
+          </div>
+          
+          {/* Quick Actions */}
+          <div style={{display:"flex", gap:8}}>
+            <Btn onClick={refresh} disabled={loading} variant="ghost" style={{flex:1, padding:"10px 0"}}>
+              {loading ? "..." : "↻ REFRESH"}
+            </Btn>
           </div>
         </div>
-        {err && <div style={{background:C.dLow, border:`1px solid ${C.danger}30`, borderRadius:4, padding:"8px 12px", marginBottom:12, fontSize:12, color:C.danger, ...mono}}>RPC: {err}</div>}
-        <div style={{display:"grid", gridTemplateColumns:isMobile ? "1fr" : "repeat(3,1fr)", gap:12}}>
-          {[["Balance", `${liveKas ?? agent.capitalLimit} KAS`, liveKas?C.accent:C.warn], ["UTXOs", liveKas?String(utxos.length):"—", C.text], ["Network", wallet?.network||DEFAULT_NETWORK, C.dim]].map(([l,v,c])=> (
-            <div key={l as any}><Label>{l}</Label><div style={{fontSize:18, color:c as any, fontWeight:700, ...mono}}>{v}</div></div>
-          ))}
-        </div>
-        {fetched && <div style={{fontSize:11, color:C.dim, marginTop:8, ...mono}}>Fetched {fetched.toLocaleTimeString()} via {KAS_API}</div>}
+        
+        {/* Error Display */}
+        {err && (
+          <div style={{
+            background:C.dLow, borderTop:`1px solid ${C.danger}30`, 
+            padding:"10px 20px", fontSize:11, color:C.danger, ...mono
+          }}>
+            RPC Error: {err}
+          </div>
+        )}
       </Card>
+
+      {/* Network & UTXO Summary */}
+      <div style={{display:"grid", gridTemplateColumns:isMobile ? "1fr" : "repeat(3,1fr)", gap:12, marginBottom:16}}>
+        <Card p={14} style={{textAlign:"center"}}>
+          <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>NETWORK</div>
+          <div style={{fontSize:14, color:C.text, fontWeight:600, ...mono}}>{NETWORK_LABEL}</div>
+        </Card>
+        <Card p={14} style={{textAlign:"center"}}>
+          <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>UTXO COUNT</div>
+          <div style={{fontSize:14, color:utxos.length > 0 ? C.ok : C.warn, fontWeight:600, ...mono}}>
+            {liveKas !== null ? utxos.length : "—"}
+          </div>
+        </Card>
+        <Card p={14} style={{textAlign:"center"}}>
+          <div style={{fontSize:10, color:C.dim, ...mono, marginBottom:4}}>LAST SYNC</div>
+          <div style={{fontSize:14, color:C.text, fontWeight:600, ...mono}}>
+            {fetched ? fetched.toLocaleTimeString() : "—"}
+          </div>
+        </Card>
+      </div>
 
       {/* Withdraw */}
       <Card p={20} style={{marginBottom:12}}>
@@ -157,3 +275,4 @@ export function WalletPanel({agent, wallet}: any) {
     </div>
   );
 }
+
