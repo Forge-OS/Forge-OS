@@ -50,6 +50,7 @@ import { DashboardRuntimeNotices } from "./DashboardRuntimeNotices";
 import { WalletPanel } from "./WalletPanel";
 
 const PerfChart = lazy(() => import("./PerfChart").then((m) => ({ default: m.PerfChart })));
+const AgentOverviewPanel = lazy(() => import("./AgentOverviewPanel").then((m) => ({ default: m.AgentOverviewPanel })));
 const IntelligencePanel = lazy(() =>
   import("./IntelligencePanel").then((m) => ({ default: m.IntelligencePanel }))
 );
@@ -58,6 +59,7 @@ const PnlAttributionPanel = lazy(() =>
   import("./PnlAttributionPanel").then((m) => ({ default: m.PnlAttributionPanel }))
 );
 const AlertsPanel = lazy(() => import("./AlertsPanel").then((m) => ({ default: m.AlertsPanel })));
+const QuantAnalyticsPanel = lazy(() => import("./QuantAnalyticsPanel").then((m) => ({ default: m.QuantAnalyticsPanel })));
 
 export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAgent}: any) {
   const LIVE_POLL_MS = 5000;
@@ -679,6 +681,7 @@ const [viewportWidth, setViewportWidth] = useState(
     {k:"overview",l:"OVERVIEW"},
     {k:"portfolio",l:"PORTFOLIO"},
     {k:"intelligence",l:"INTELLIGENCE"},
+    {k:"analytics",l:"ANALYTICS"},
     {k:"attribution",l:"ATTRIBUTION"},
     {k:"alerts",l:"ALERTS"},
     {k:"queue",l:`QUEUE${pendingCount>0?` (${pendingCount})`:""}`},
@@ -1112,6 +1115,16 @@ const [viewportWidth, setViewportWidth] = useState(
               <ExtLink href={`${EXPLORER}/addresses/${ACCUMULATION_VAULT}`} label="VAULT EXPLORER ↗" />
             </div>
           </Card>
+          
+          {/* AI Agent Overview Panel */}
+          <Suspense fallback={<Card p={18}><Label>Agent Overview</Label><div style={{fontSize:12,color:C.dim}}>Loading agent overview...</div></Card>}>
+            <AgentOverviewPanel 
+              decisions={decisions} 
+              queue={queue} 
+              agent={agent}
+              onNavigate={(tabName: string) => setTab(tabName)}
+            />
+          </Suspense>
           <div style={{marginBottom:12}}>
             <Suspense fallback={<Card p={18}><Label>Performance</Label><div style={{fontSize:12,color:C.dim}}>Loading performance chart...</div></Card>}>
               <PerfChart decisions={decisions} kpiTarget={agent.kpiTarget}/>
@@ -1172,6 +1185,13 @@ const [viewportWidth, setViewportWidth] = useState(
           <IntelligencePanel decisions={decisions} queue={queue} loading={loading} onRun={runCycle}/>
         </Suspense>
       )}
+      
+      {tab==="analytics" && (
+        <Suspense fallback={<Card p={18}><Label>Analytics</Label><div style={{fontSize:12,color:C.dim}}>Loading analytics panel...</div></Card>}>
+          <QuantAnalyticsPanel decisions={decisions} queue={queue} />
+        </Suspense>
+      )}
+      
       {tab==="attribution" && (
         <Suspense fallback={<Card p={18}><Label>Attribution</Label><div style={{fontSize:12,color:C.dim}}>Loading attribution panel...</div></Card>}>
           <PnlAttributionPanel summary={pnlAttribution} />
