@@ -240,6 +240,66 @@ export function WalletPanel({ agent, wallet, kasData, marketHistory = [], lastDe
         )}
       </Card>
 
+      {/* ── DEPOSIT ADDRESS ── */}
+      <Card p={12} style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.12em", marginBottom: 8 }}>
+          DEPOSIT ADDRESS <span style={{ color: C.ok }}>↓ INCOMING</span>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ flex: 1, background: "rgba(8,13,20,0.65)", borderRadius: 6, padding: "9px 12px", border: `1px solid rgba(33,48,67,0.6)`, overflow: "hidden" }}>
+            <div style={{ fontSize: 8, color: C.dim, ...mono, marginBottom: 2, letterSpacing: "0.1em" }}>KASPA ADDRESS</div>
+            <div style={{ fontSize: 10, color: C.accent, ...mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {wallet?.address || "—"}
+            </div>
+          </div>
+          <Btn onClick={() => navigator.clipboard?.writeText(wallet?.address || "")} variant="primary" style={{ padding: "8px 14px", fontSize: 11 }}>📋</Btn>
+        </div>
+        {wallet?.address && (
+          <ExtLink href={`${EXPLORER}/addresses/${wallet.address}`} style={{ fontSize: 9, color: C.dim, ...mono, marginTop: 6, display: "block" }}>
+            ↗ View on Kaspa Explorer
+          </ExtLink>
+        )}
+      </Card>
+
+      {/* ── SEND KAS ── */}
+      <Card p={12} style={{ marginBottom: 12, border: `1px solid ${C.danger}20` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.12em" }}>
+            SEND KAS <span style={{ color: C.danger }}>↑ OUTGOING</span>
+          </div>
+          <span style={{ fontSize: 9, color: C.dim, ...mono }}>MAX: {maxSend} KAS</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 5, marginBottom: 8 }}>
+          {[{ l: "25%", v: maxSendKas * 0.25 }, { l: "50%", v: maxSendKas * 0.5 }, { l: "75%", v: maxSendKas * 0.75 }, { l: "MAX", v: maxSendKas }].map(p => (
+            <button key={p.l} onClick={() => setWithdrawAmt(p.v.toFixed(4))} disabled={maxSendKas <= 0}
+              style={{ flex: 1, padding: "5px", borderRadius: 4, border: `1px solid rgba(33,48,67,0.7)`, background: "rgba(8,13,20,0.55)", color: C.dim, fontSize: 10, cursor: "pointer", ...mono }}>
+              {p.l}
+            </button>
+          ))}
+        </div>
+
+        <Inp label="Recipient" value={withdrawTo} onChange={setWithdrawTo} placeholder="kaspa:..." />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "end", marginBottom: 6 }}>
+          <Inp label="Amount (KAS)" value={withdrawAmt} onChange={setWithdrawAmt} type="number" suffix="KAS" placeholder="0" />
+          <Btn onClick={() => setWithdrawAmt(maxSend)} variant="ghost" size="sm">MAX</Btn>
+        </div>
+
+        {withdrawAmt && Number(withdrawAmt) > 0 && priceUsd > 0 && (
+          <div style={{ fontSize: 9, color: C.dim, ...mono, marginBottom: 6, textAlign: "right" }}>
+            ≈ {fmtUsd(Number(withdrawAmt) * priceUsd)} USDC
+          </div>
+        )}
+
+        <Btn
+          onClick={initiateWithdraw}
+          disabled={!isKaspaAddress(withdrawTo, ALLOWED_ADDRESS_PREFIXES) || !Number(withdrawAmt) || Number(withdrawAmt) > maxSendKas}
+          style={{ width: "100%", padding: "9px", fontSize: 11 }}>
+          ↗ SEND {withdrawAmt || "0"} KAS
+          {withdrawAmt && Number(withdrawAmt) > 0 && priceUsd > 0 ? ` (${fmtUsd(Number(withdrawAmt) * priceUsd)})` : ""}
+        </Btn>
+      </Card>
+
       {/* ── DAG NETWORK + AGENT SIGNAL ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
 
@@ -370,68 +430,6 @@ export function WalletPanel({ agent, wallet, kasData, marketHistory = [], lastDe
           )}
         </Card>
       )}
-
-      {/* ── DEPOSIT ADDRESS ── */}
-      <Card p={14} style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.12em", marginBottom: 10 }}>
-          DEPOSIT ADDRESS <span style={{ color: C.ok }}>↓ INCOMING</span>
-        </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <div style={{ flex: 1, background: "rgba(8,13,20,0.65)", borderRadius: 6, padding: "10px 12px", border: `1px solid rgba(33,48,67,0.6)`, overflow: "hidden" }}>
-            <div style={{ fontSize: 8, color: C.dim, ...mono, marginBottom: 3, letterSpacing: "0.1em" }}>KASPA ADDRESS</div>
-            <div style={{ fontSize: 10, color: C.accent, ...mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {wallet?.address || "—"}
-            </div>
-          </div>
-          <Btn onClick={() => navigator.clipboard?.writeText(wallet?.address || "")} variant="primary" style={{ padding: "8px 14px", fontSize: 11 }}>📋</Btn>
-        </div>
-        {wallet?.address && (
-          <div style={{ marginTop: 8 }}>
-            <ExtLink href={`${EXPLORER}/addresses/${wallet.address}`} style={{ fontSize: 9, color: C.dim, ...mono }}>
-              ↗ View on Kaspa Explorer
-            </ExtLink>
-          </div>
-        )}
-      </Card>
-
-      {/* ── SEND KAS ── */}
-      <Card p={14} style={{ marginBottom: 10, border: `1px solid ${C.danger}20` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.12em" }}>
-            SEND KAS <span style={{ color: C.danger }}>↑ OUTGOING</span>
-          </div>
-          <span style={{ fontSize: 9, color: C.dim, ...mono }}>MAX: {maxSend} KAS</span>
-        </div>
-
-        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-          {[{ l: "25%", v: maxSendKas * 0.25 }, { l: "50%", v: maxSendKas * 0.5 }, { l: "75%", v: maxSendKas * 0.75 }, { l: "MAX", v: maxSendKas }].map(p => (
-            <button key={p.l} onClick={() => setWithdrawAmt(p.v.toFixed(4))} disabled={maxSendKas <= 0}
-              style={{ flex: 1, padding: "6px", borderRadius: 4, border: `1px solid rgba(33,48,67,0.7)`, background: "rgba(8,13,20,0.55)", color: C.dim, fontSize: 10, cursor: "pointer", ...mono }}>
-              {p.l}
-            </button>
-          ))}
-        </div>
-
-        <Inp label="Recipient" value={withdrawTo} onChange={setWithdrawTo} placeholder="kaspa:..." />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "end", marginBottom: 8 }}>
-          <Inp label="Amount (KAS)" value={withdrawAmt} onChange={setWithdrawAmt} type="number" suffix="KAS" placeholder="0" />
-          <Btn onClick={() => setWithdrawAmt(maxSend)} variant="ghost" size="sm">MAX</Btn>
-        </div>
-
-        {withdrawAmt && Number(withdrawAmt) > 0 && priceUsd > 0 && (
-          <div style={{ fontSize: 9, color: C.dim, ...mono, marginBottom: 8, textAlign: "right" }}>
-            ≈ {fmtUsd(Number(withdrawAmt) * priceUsd)} USDC
-          </div>
-        )}
-
-        <Btn
-          onClick={initiateWithdraw}
-          disabled={!isKaspaAddress(withdrawTo, ALLOWED_ADDRESS_PREFIXES) || !Number(withdrawAmt) || Number(withdrawAmt) > maxSendKas}
-          style={{ width: "100%", padding: "10px", fontSize: 11 }}>
-          ↗ SEND {withdrawAmt || "0"} KAS
-          {withdrawAmt && Number(withdrawAmt) > 0 && priceUsd > 0 ? ` (${fmtUsd(Number(withdrawAmt) * priceUsd)})` : ""}
-        </Btn>
-      </Card>
 
       {/* ── UTXOs ── */}
       {utxos.length > 0 && (
