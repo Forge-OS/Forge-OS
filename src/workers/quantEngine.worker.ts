@@ -11,11 +11,19 @@ type QuantWorkerResponse =
   | { id: number; ok: true; decision: any }
   | { id: number; ok: false; error: string };
 
+const WORKER_TIMEOUT_MS = 10000;
+
 self.onmessage = async (event: MessageEvent<QuantWorkerRequest>) => {
   const msg = event.data;
   if (!msg || typeof msg.id !== "number") return;
   try {
-    const decision = await runQuantEngine(msg.agent, msg.kasData, msg.context);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Quant engine timed out after ${WORKER_TIMEOUT_MS}ms`)), WORKER_TIMEOUT_MS)
+    );
+    const decision = await Promise.race([
+      runQuantEngine(msg.agent, msg.kasData, msg.context),
+      timeoutPromise,
+    ]);
     const out: QuantWorkerResponse = { id: msg.id, ok: true, decision };
     (self as unknown as Worker).postMessage(out);
   } catch (e: any) {

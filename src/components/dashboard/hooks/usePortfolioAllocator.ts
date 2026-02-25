@@ -43,6 +43,8 @@ export function usePortfolioAllocator(params: UsePortfolioAllocatorParams) {
   }, [portfolioConfig, portfolioScope]);
 
   useEffect(() => {
+    // No peers to load when there's only one agent
+    if (allAgents.length <= 1) return;
     const activeId = String(activeAgentId || "");
     const loadPeers = () => {
       const next: Record<string, any> = {};
@@ -55,7 +57,8 @@ export function usePortfolioAllocator(params: UsePortfolioAllocatorParams) {
       setPeerRuntimeCache(next);
     };
     loadPeers();
-    const timer = setInterval(loadPeers, 4000);
+    // Peer state doesn't change faster than the cycle interval; 8s is sufficient
+    const timer = setInterval(loadPeers, 8000);
     return () => clearInterval(timer);
   }, [activeAgentId, allAgents, portfolioRefreshSeq, walletAddress]);
 

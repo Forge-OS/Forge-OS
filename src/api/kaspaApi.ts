@@ -11,6 +11,12 @@ const RETRY_BASE_DELAY_MS = 250;
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const PRICE_CACHE_TTL_MS = 20000;
 
+// Circuit breaker: after 3 consecutive total failures, back off for 20s
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_RESET_MS = 20000;
+let consecutiveFailures = 0;
+let circuitOpenUntil = 0;
+
 let priceCache: { value: number; ts: number } | null = null;
 let priceInflight: Promise<number> | null = null;
 
@@ -78,6 +84,12 @@ async function fetchJson(path: string) {
     throw new Error("No Kaspa API endpoints configured");
   }
 
+  // Circuit breaker: skip all requests while circuit is open
+  const now = Date.now();
+  if (now < circuitOpenUntil) {
+    throw rpcError(new Error(`Kaspa API circuit open – retrying in ${Math.ceil((circuitOpenUntil - now) / 1000)}s`), { path });
+  }
+
   const requestRoots = resolveApiRoots(path);
   const errors: string[] = [];
 
@@ -103,6 +115,7 @@ async function fetchJson(path: string) {
           throw new Error(`${status || "request_failed"}`);
         }
 
+        consecutiveFailures = 0;
         return await res.json();
       } catch(err: any) {
         const isTimeout = err?.name === "AbortError";
@@ -131,6 +144,10 @@ async function fetchJson(path: string) {
     }
   }
 
+  consecutiveFailures += 1;
+  if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+    circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_RESET_MS;
+  }
   throw rpcError(new Error(`Kaspa API unavailable for ${path}: ${errors.join(" | ")}`), {
     path,
     roots: requestRoots,

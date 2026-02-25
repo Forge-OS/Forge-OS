@@ -107,7 +107,9 @@ export function useKaspaFeed(params: UseKaspaFeedParams) {
         setStreamConnected(true);
       };
 
-      ws.onmessage = () => {
+      ws.onmessage = (ev: MessageEvent) => {
+        // Guard: only process non-empty string or binary messages
+        if (!ev || (ev.data !== null && ev.data !== undefined && typeof ev.data !== "string" && !(ev.data instanceof ArrayBuffer) && !(ev.data instanceof Blob))) return;
         if (wsRefreshTimer) return;
         wsRefreshTimer = setTimeout(() => {
           wsRefreshTimer = null;

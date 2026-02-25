@@ -47,6 +47,20 @@ export function isForgeError(err: unknown): err is ForgeError {
   return err instanceof ForgeError;
 }
 
+// Pre-compiled patterns — avoids re-creating RegExp on every error inference call
+const RE_WALLET_TIMEOUT = /timeout/;
+const RE_WALLET_REJECTED = /rejected|denied|cancel/;
+const RE_WALLET_NETWORK = /network/;
+const RE_WALLET_MISMATCH = /mismatch|expected|switch/;
+const RE_WALLET_UNAVAILABLE = /not detected|unavailable|not connected|browser wallet apis unavailable/;
+const RE_WALLET_PROVIDER = /provider missing|invalid/;
+const RE_RPC_RATE = /429|rate/i;
+const RE_RPC_INVALID = /invalid/;
+const RE_RPC_TIMEOUT = /timeout/;
+const RE_TX_INVALID = /invalid/;
+const RE_TX_REJECTED = /rejected|denied|cancel/;
+const RE_RETRYABLE = /(timeout|network|unavailable|429|503|502|504)/i;
+
 export function makeForgeError(params: ConstructorParameters<typeof ForgeError>[0]) {
   return new ForgeError(params);
 }
@@ -54,25 +68,25 @@ export function makeForgeError(params: ConstructorParameters<typeof ForgeError>[
 function inferCode(domain: ForgeErrorDomain, message: string): ForgeErrorCode {
   const msg = String(message || "").toLowerCase();
   if (domain === "wallet") {
-    if (/timeout/.test(msg)) return "WALLET_TIMEOUT";
-    if (/rejected|denied|cancel/.test(msg)) return "WALLET_USER_REJECTED";
-    if (/network/.test(msg) && /mismatch|expected|switch/.test(msg)) return "WALLET_NETWORK_MISMATCH";
-    if (/not detected|unavailable|not connected|browser wallet apis unavailable/.test(msg)) return "WALLET_UNAVAILABLE";
-    if (/provider missing|invalid/.test(msg)) return "WALLET_PROVIDER_INVALID";
+    if (RE_WALLET_TIMEOUT.test(msg)) return "WALLET_TIMEOUT";
+    if (RE_WALLET_REJECTED.test(msg)) return "WALLET_USER_REJECTED";
+    if (RE_WALLET_NETWORK.test(msg) && RE_WALLET_MISMATCH.test(msg)) return "WALLET_NETWORK_MISMATCH";
+    if (RE_WALLET_UNAVAILABLE.test(msg)) return "WALLET_UNAVAILABLE";
+    if (RE_WALLET_PROVIDER.test(msg)) return "WALLET_PROVIDER_INVALID";
   }
   if (domain === "rpc") {
-    if (/timeout/.test(msg)) return "RPC_TIMEOUT";
-    if (/429|rate/i.test(msg)) return "RPC_RATE_LIMIT";
-    if (/invalid/.test(msg)) return "RPC_RESPONSE_INVALID";
+    if (RE_RPC_TIMEOUT.test(msg)) return "RPC_TIMEOUT";
+    if (RE_RPC_RATE.test(msg)) return "RPC_RATE_LIMIT";
+    if (RE_RPC_INVALID.test(msg)) return "RPC_RESPONSE_INVALID";
     return "RPC_UNAVAILABLE";
   }
   if (domain === "ai") {
-    if (/timeout/.test(msg)) return "AI_TIMEOUT";
+    if (RE_RPC_TIMEOUT.test(msg)) return "AI_TIMEOUT";
     return "AI_UNAVAILABLE";
   }
   if (domain === "tx") {
-    if (/invalid/.test(msg)) return "TX_INVALID";
-    if (/rejected|denied|cancel/.test(msg)) return "TX_REJECTED";
+    if (RE_TX_INVALID.test(msg)) return "TX_INVALID";
+    if (RE_TX_REJECTED.test(msg)) return "TX_REJECTED";
     return "TX_BROADCAST_FAILED";
   }
   if (domain === "lifecycle") return "LIFECYCLE_INVALID_TRANSITION";
@@ -93,7 +107,7 @@ export function normalizeError(err: unknown, fallback: {
   const code = fallback.code || inferCode(domain, rawMessage);
   const retryable = typeof fallback.retryable === "boolean"
     ? fallback.retryable
-    : /(timeout|network|unavailable|429|503|502|504)/i.test(rawMessage);
+    : RE_RETRYABLE.test(rawMessage);
 
   return new ForgeError({
     message: rawMessage,
