@@ -115,8 +115,9 @@ async function fetchJson(path: string) {
           throw new Error(`${status || "request_failed"}`);
         }
 
+        const json = await res.json();
         consecutiveFailures = 0;
-        return await res.json();
+        return json;
       } catch(err: any) {
         const isTimeout = err?.name === "AbortError";
         const rawMessage = String(err?.message || "");

@@ -93,6 +93,10 @@ function buildReceiptStreamUrl() {
   return url.toString();
 }
 
+const SSE_RECONNECT_BASE_DELAY_MS = 1500;
+const SSE_RECONNECT_MAX_DELAY_MS = 30000;
+const SSE_MAX_RETRIES = 8;
+
 export function openBackendExecutionReceiptStream(params: {
   onReceipt: (receipt: BackendExecutionReceipt) => void;
   onStatus?: (status: "connecting" | "open" | "error" | "closed") => void;
@@ -102,34 +106,67 @@ export function openBackendExecutionReceiptStream(params: {
   if (!url) return null;
   const onReceipt = params?.onReceipt;
   const onStatus = params?.onStatus;
-  const source = new EventSource(url);
-  onStatus?.("connecting");
 
-  const handleOpen = () => onStatus?.("open");
-  const handleError = () => onStatus?.("error");
-  const handleReceipt = (ev: MessageEvent) => {
-    try {
-      const payload = ev?.data ? JSON.parse(String(ev.data)) : null;
-      const receipt = normalizeStreamReceiptPayload(payload);
-      if (receipt && typeof onReceipt === "function") onReceipt(receipt);
-    } catch {
-      // Ignore malformed SSE events and keep the stream alive.
-    }
-  };
+  let closedByApp = false;
+  let attempts = 0;
+  let activeSource: EventSource | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  source.addEventListener("open", handleOpen as EventListener);
-  source.addEventListener("error", handleError as EventListener);
-  source.addEventListener("receipt", handleReceipt as EventListener);
+  function connect() {
+    if (closedByApp) return;
+    const source = new EventSource(url);
+    activeSource = source;
+    onStatus?.("connecting");
+
+    const handleOpen = () => {
+      attempts = 0;
+      onStatus?.("open");
+    };
+
+    const handleError = () => {
+      if (closedByApp) return;
+      onStatus?.("error");
+      // Close source to prevent native 3s auto-retry; we control reconnect timing
+      try { source.close(); } catch {}
+      if (activeSource === source) activeSource = null;
+
+      if (attempts >= SSE_MAX_RETRIES) {
+        onStatus?.("closed");
+        return;
+      }
+      const delay = Math.min(SSE_RECONNECT_MAX_DELAY_MS, SSE_RECONNECT_BASE_DELAY_MS * 2 ** attempts);
+      attempts += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    };
+
+    const handleReceipt = (ev: MessageEvent) => {
+      try {
+        const payload = ev?.data ? JSON.parse(String(ev.data)) : null;
+        const receipt = normalizeStreamReceiptPayload(payload);
+        if (receipt && typeof onReceipt === "function") onReceipt(receipt);
+      } catch {
+        // Ignore malformed SSE events and keep the stream alive.
+      }
+    };
+
+    source.addEventListener("open", handleOpen as EventListener);
+    source.addEventListener("error", handleError as EventListener);
+    source.addEventListener("receipt", handleReceipt as EventListener);
+  }
+
+  connect();
 
   return {
     close() {
-      try { source.removeEventListener("open", handleOpen as EventListener); } catch {}
-      try { source.removeEventListener("error", handleError as EventListener); } catch {}
-      try { source.removeEventListener("receipt", handleReceipt as EventListener); } catch {}
-      try { source.close(); } catch {}
+      closedByApp = true;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      try { activeSource?.close(); } catch {}
+      activeSource = null;
       onStatus?.("closed");
     },
-    source,
     url,
   };
 }

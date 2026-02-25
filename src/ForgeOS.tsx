@@ -46,6 +46,13 @@ export default function ForgeOS() {
     setWallet(session);
     setView(agents.length > 0 ? "dashboard" : "create");
   };
+  const handleDisconnect = () => {
+    const confirmed = window.confirm(
+      "Disconnect wallet?\n\nYour agent configurations will be preserved and restored on next connect."
+    );
+    if (!confirmed) return;
+    setWallet(null);
+  };
   const handleDeploy = (a: any) => {
     setAgents((prev: any[]) => {
       // If updating existing agent, replace it; otherwise add new
@@ -114,8 +121,8 @@ export default function ForgeOS() {
       <div className="forge-topbar" style={{borderBottom:`1px solid ${C.border}`, padding:"12px clamp(14px, 2vw, 24px)", display:"flex", flexDirection:isMobile ? "column" : "row", alignItems:isMobile ? "stretch" : "center", justifyContent:"space-between", gap:isMobile ? 10 : 0}}>
         <div style={{display:"flex", alignItems:"center", gap:14, justifyContent:isMobile ? "space-between" : "flex-start"}}>
           <div style={{display:"flex", alignItems:"center", gap:8}}>
-            <img src="/forge-os-icon3.png" alt="Forge-OS" style={{width:172, height:172, objectFit:"contain", filter:"drop-shadow(0 0 8px rgba(57,221,182,0.5))"}} />
-            <div style={{fontSize:28, fontWeight:700, letterSpacing:"0.14em", ...mono}}>
+            <img src="/forge-os-icon3.png" alt="Forge-OS" style={{width:86, height:86, objectFit:"contain", filter:"drop-shadow(0 0 8px rgba(57,221,182,0.5))"}} />
+            <div style={{fontSize:14, fontWeight:700, letterSpacing:"0.14em", ...mono}}>
               <span style={{color:C.accent}}>FORGE</span><span style={{color:C.text}}>-OS</span>
             </div>
           </div>
@@ -182,7 +189,7 @@ export default function ForgeOS() {
             <div style={{width:6, height:6, borderRadius:"50%", background:wallet?.provider==="demo"?C.warn:C.ok}}/>
             <span style={{fontSize:10, color:C.dim, letterSpacing:"0.08em", ...mono}}>{shortAddr(wallet?.address)}</span>
           </div>
-          <Btn onClick={()=>setWallet(null)} variant="ghost" size="sm">DISCONNECT</Btn>
+          <Btn onClick={handleDisconnect} variant="ghost" size="sm">DISCONNECT</Btn>
         </div>
       </div>
       {view === "create" ? (

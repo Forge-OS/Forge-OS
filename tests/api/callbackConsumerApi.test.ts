@@ -49,6 +49,7 @@ describe("callbackConsumerApi", () => {
   });
 
   it("handles SSE reconnect status transitions and receipt events", async () => {
+    vi.useFakeTimers();
     vi.stubEnv("VITE_EXECUTION_RECEIPT_API_TOKEN", "test-token");
     vi.stubEnv("VITE_EXECUTION_RECEIPT_SSE_URL", "http://127.0.0.1:7777/v1/execution-receipts/stream");
     vi.stubEnv("VITE_EXECUTION_RECEIPT_SSE_REPLAY_LIMIT", "12");
@@ -97,13 +98,25 @@ describe("callbackConsumerApi", () => {
     expect(stream?.url).toContain("limit=12");
     expect(stream?.url).toContain("token=test-token");
 
-    const source = MockEventSource.instances[0];
-    expect(source).toBeTruthy();
+    // source1: first connection attempt
+    const source1 = MockEventSource.instances[0];
+    expect(source1).toBeTruthy();
 
-    source.emit("error", { type: "error" });
-    source.emit("open", { type: "open" });
-    source.emit("receipt", { data: "{not-json" });
-    source.emit("receipt", {
+    // Simulate connection error → source1 is closed, reconnect timer scheduled
+    source1.emit("error", { type: "error" });
+    expect(source1.closed).toBe(true);
+    expect(statuses).toContain("error");
+
+    // Advance timers to trigger reconnect (source2 created)
+    vi.runAllTimers();
+    const source2 = MockEventSource.instances[1];
+    expect(source2).toBeTruthy();
+    expect(statuses).toContain("connecting");
+
+    // source2 opens successfully, then receives receipts
+    source2.emit("open", { type: "open" });
+    source2.emit("receipt", { data: "{not-json" });
+    source2.emit("receipt", {
       data: JSON.stringify({
         receipt: {
           txid: "C".repeat(64),
@@ -113,21 +126,22 @@ describe("callbackConsumerApi", () => {
         },
       }),
     });
-    source.emit("receipt", {
+    source2.emit("receipt", {
       data: JSON.stringify({
         txid: "D".repeat(64),
         status: "confirmed",
       }),
     });
 
-    expect(statuses).toEqual(["connecting", "error", "open"]);
+    expect(statuses).toEqual(["connecting", "error", "connecting", "open"]);
     expect(receipts).toHaveLength(2);
     expect(receipts[0]?.txid).toBe("c".repeat(64));
     expect(receipts[1]?.txid).toBe("d".repeat(64));
 
     stream?.close();
-    expect(source.closed).toBe(true);
-    expect(statuses).toEqual(["connecting", "error", "open", "closed"]);
+    expect(source2.closed).toBe(true);
+    expect(statuses).toEqual(["connecting", "error", "connecting", "open", "closed"]);
+    vi.useRealTimers();
   });
 
   it("posts receipt consistency metrics reports", async () => {
