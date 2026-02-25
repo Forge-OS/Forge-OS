@@ -158,27 +158,33 @@ export function WalletPanel({ agent, wallet, kasData, marketHistory = [], lastDe
         {/* Price row */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, padding: "14px 16px 0" }}>
           <div>
-            <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.12em", marginBottom: 4 }}>KAS / USDC PRICE</div>
+            <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.12em", marginBottom: 4 }}>KASPA BALANCE</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontSize: 26, color: C.accent, fontWeight: 700, ...mono }}>
-                {priceUsd > 0 ? `$${priceUsd.toFixed(4)}` : "—"}
+                {bal > 0 ? `${fmt(bal, 2)} KAS` : "—"}
               </span>
-              {change24hPct !== null && (
-                <span style={{ fontSize: 12, color: change24hPositive ? C.ok : C.danger, fontWeight: 600, ...mono }}>
-                  {change24hPositive ? "▲ +" : "▼ "}{change24hPct.toFixed(2)}%
+              {balanceUsd !== null && (
+                <span style={{ fontSize: 12, color: C.dim, fontWeight: 400, ...mono }}>
+                  ≈ {fmtUsd(balanceUsd)}
                 </span>
               )}
             </div>
             {change24hPct !== null && (
               <div style={{ fontSize: 9, color: C.dim, ...mono, marginTop: 2 }}>
-                Session change · {priceSnapshots.length} samples
+                {change24hPositive ? "▲ +" : "▼ "}{change24hPct.toFixed(2)}% session · {priceSnapshots.length} samples
               </div>
             )}
           </div>
-          {/* Mini sparkline */}
-          {priceChartData.length > 3 && (
-            <div style={{ width: 120, paddingBottom: 8 }}>
-              <ResponsiveContainer width="100%" height={48}>
+          {/* Mini sparkline + Price */}
+          <div style={{ width: 120, paddingBottom: 8, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+            <div style={{ textAlign: "right", marginBottom: 4 }}>
+              <div style={{ fontSize: 8, color: C.dim, ...mono, letterSpacing: "0.1em" }}>KAS / USDC</div>
+              <div style={{ fontSize: 14, color: C.text, fontWeight: 700, ...mono }}>
+                {priceUsd > 0 ? `$${priceUsd.toFixed(4)}` : "—"}
+              </div>
+            </div>
+            {priceChartData.length > 3 && (
+              <ResponsiveContainer width="100%" height={40}>
                 <LineChart data={priceChartData}>
                   <Line
                     type="monotone" dataKey="price"
@@ -191,8 +197,8 @@ export function WalletPanel({ agent, wallet, kasData, marketHistory = [], lastDe
                   />
                 </LineChart>
               </ResponsiveContainer>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Stablecoin balance */}
@@ -235,22 +241,6 @@ export function WalletPanel({ agent, wallet, kasData, marketHistory = [], lastDe
                 <div style={{ fontSize: 9, color: C.dim, ...mono }}>≈ $0.00</div>
               </div>
             </div>
-          </div>
-
-          {/* Stats row – 4 tiles */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 14 }}>
-            {[
-              { k: "SPENDABLE", v: liveKas !== null ? `${fmt(spendableKas, 2)} KAS` : "—", sub: spendableUsd !== null ? fmtUsd(spendableUsd) : null, c: C.accent },
-              { k: "RESERVE", v: `${RESERVE} KAS`, sub: "locked", c: C.purple },
-              { k: "NET FEE", v: `${NET_FEE} KAS`, sub: "per tx", c: C.warn },
-              { k: "UTXO COUNT", v: utxos.length > 0 ? String(utxos.length) : "—", sub: "outputs", c: C.dim },
-            ].map(item => (
-              <div key={item.k} style={{ background: `linear-gradient(135deg, ${item.c}10 0%, rgba(8,13,20,0.6) 100%)`, borderRadius: 8, padding: "9px 10px", border: `1px solid ${item.c}20` }}>
-                <div style={{ fontSize: 8, color: C.dim, ...mono, marginBottom: 3, letterSpacing: "0.1em" }}>{item.k}</div>
-                <div style={{ fontSize: 12, color: item.c, fontWeight: 700, ...mono }}>{item.v}</div>
-                {item.sub && <div style={{ fontSize: 8, color: C.muted, ...mono, marginTop: 1 }}>{item.sub}</div>}
-              </div>
-            ))}
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
