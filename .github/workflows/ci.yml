@@ -33,7 +33,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_BASE_PATH: /
           VITE_KAS_API: ${{ vars.VITE_KAS_API || 'https://api-tn10.kaspa.org' }}
           VITE_KAS_API_FALLBACKS: ${{ vars.VITE_KAS_API_FALLBACKS || 'https://api.kaspa.org' }}
           VITE_KAS_EXPLORER: ${{ vars.VITE_KAS_EXPLORER || 'https://explorer-tn10.kaspa.org' }}
@@ -67,7 +67,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_BASE_PATH: /
           VITE_KAS_API: ${{ vars.VITE_KAS_API || 'https://api-tn10.kaspa.org' }}
           VITE_KAS_API_FALLBACKS: ${{ vars.VITE_KAS_API_FALLBACKS || 'https://api.kaspa.org' }}
           VITE_KAS_EXPLORER: ${{ vars.VITE_KAS_EXPLORER || 'https://explorer-tn10.kaspa.org' }}
