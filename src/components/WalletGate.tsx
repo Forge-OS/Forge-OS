@@ -155,26 +155,17 @@ export function WalletGate({onConnect}: any) {
     setBusyProvider(null);
   };
 
-  const wallets = FORGEOS_CONNECTABLE_WALLETS.filter(w => w.id !== "ghost").map((w) => {
-    if (w.id === "kasware") return { ...w, statusText: detected.kasware ? "Detected in this tab" : "Not detected", statusColor: detected.kasware ? C.ok : C.warn, cta: "Connect Kasware" };
-    if (w.id === "kastle") return { ...w, statusText: detected.kastle ? "Detected in this tab" : "Not detected", statusColor: detected.kastle ? C.ok : C.warn, cta: "Connect Kastle" };
-    if (w.id === "kaspium") return { ...w, statusText: kaspiumAddressValid ? `Ready · ${shortAddr(activeKaspiumAddress)}` : "Address resolves on connect", statusColor: kaspiumAddressValid ? C.ok : C.warn, cta: kaspiumAddressValid ? "Connect Kaspium" : "Connect + Pair Address" };
-    if (w.id === "tangem" || w.id === "onekey") return { ...w, statusText: "Manual bridge · address + txid handoff", statusColor: C.warn, cta: `Connect ${w.name}` };
+  const wallets = FORGEOS_CONNECTABLE_WALLETS.filter(w => w.id === "demo").map((w) => {
     return { ...w, statusText: "No blockchain broadcast", statusColor: C.dim, cta: "Enter Demo Mode" };
   });
 
   const walletSections = useMemo(() => {
     const ordered = Array.isArray(wallets) ? wallets : [];
-    const direct = ordered.filter((w) => ["kasware", "kastle"].includes(String(w.id)));
-    const mobileBridge = ordered.filter((w) => ["kaspium", "tangem", "onekey"].includes(String(w.id)));
     const sandbox = ordered.filter((w) => String(w.id) === "demo");
-    const other = ordered.filter((w) => !direct.includes(w) && !mobileBridge.includes(w) && !sandbox.includes(w));
     return [
-      { key: "direct", title: "Browser Wallets", subtitle: "Native Kaspa signing + broadcast in this session.", items: [...direct, ...other.filter((w) => String(w.class) === "extension")] },
-      { key: "mobile-bridge", title: "Mobile & Hardware", subtitle: "Deep-link or manual bridge/handoff flows.", items: [...mobileBridge, ...other.filter((w) => String(w.class) !== "extension" && String(w.id) !== "demo")] },
       { key: "sandbox", title: "Sandbox", subtitle: "UI validation — no on-chain broadcast.", items: sandbox },
     ].filter((section) => section.items.length > 0);
-  }, [wallets]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wallets]);
 
   return (
     <div className="forge-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", minHeight: "100vh", padding: "clamp(12px, 2vw, 20px)" }}>
@@ -308,6 +299,40 @@ export function WalletGate({onConnect}: any) {
               All operations are wallet-native. Forge-OS never stores private keys or signs on your behalf.
             </div>
 
+            {/* Create / import wallet shortcut - moved here */}
+            <div style={{ 
+              textAlign: "center", 
+              marginBottom: 16,
+              padding: "16px 20px",
+              background: "linear-gradient(135deg, rgba(57,221,182,0.06) 0%, rgba(8,13,20,0.6) 100%)",
+              border: `1px solid ${C.accent}30`,
+              borderRadius: 12,
+              boxShadow: `0 0 20px rgba(57,221,182,0.08), inset 0 1px 0 rgba(255,255,255,0.03)`,
+            }}>
+              <div style={{ fontSize: 11, color: C.text, marginBottom: 10, ...mono, fontWeight: 600 }}>
+                Don't have a Kaspa wallet?
+              </div>
+              <button
+                onClick={() => setShowCreator(true)}
+                style={{
+                  background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
+                  border: "none", 
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  color: "#04110E", 
+                  fontSize: 10, 
+                  ...mono,
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  padding: "10px 20px",
+                  boxShadow: "0 4px 12px rgba(57,221,182,0.25)",
+                  transition: "transform 0.15s, box-shadow 0.15s",
+                }}
+              >
+                → Create or import one
+              </button>
+            </div>
+
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {walletSections.map((section) => (
                 <div key={section.key}>
@@ -384,21 +409,6 @@ export function WalletGate({onConnect}: any) {
             {err && <div style={{ marginTop: 12, padding: "10px 14px", background: C.dLow, border: `1px solid ${C.danger}40`, borderRadius: 6, fontSize: 11, color: C.danger, ...mono }}>{err}</div>}
 
             <Divider m={16} />
-            {/* Create / import wallet shortcut */}
-            <div style={{ textAlign: "center" }}>
-              <button
-                onClick={() => setShowCreator(true)}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: C.accent, fontSize: 10, ...mono,
-                  textDecoration: "underline", textUnderlineOffset: 3,
-                  padding: "4px 0",
-                }}
-              >
-                No wallet yet? Create or import one →
-              </button>
-            </div>
-            <Divider m={8} />
             <div style={{ fontSize: 9, color: C.dim, ...mono, lineHeight: 1.6 }}>
               Forge-OS never requests your private key · All signing happens inside your wallet · {NETWORK_LABEL}
             </div>
