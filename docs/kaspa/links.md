@@ -37,3 +37,6 @@
 ## Testnet / Dev Infra
 - Testnet Faucet (TN10): https://faucet-tn10.kaspanet.io/
 - Kaspa Stream: https://kaspa.stream/
+
+## Support FORGE-OS
+- Sponsor / Donate: [SPONSOR.md](../SPONSOR.md)

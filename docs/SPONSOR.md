@@ -1,0 +1,63 @@
+<p align="center">
+  <img alt="FORGE-OS" src="https://raw.githubusercontent.com/kaspa-org/BRD/main/brd-mobile/assets/logos/kaspa-logo-full.png" width="200" />
+  <h1>Support FORGE-OS</h1>
+  <p>Kaspa-Native Quant / AI Control Plane</p>
+</p>
+
+---
+
+## 🚀 Support the Development
+
+FORGE-OS is an open-source **Kaspa-native quant trading control plane** with wallet-native signing, real AI overlay, deterministic quant guardrails, and production-oriented runtime controls.
+
+If you find this project valuable, consider supporting its continued development!
+
+---
+
+## 💚 How to Sponsor
+
+### Option 1: Kaspa (Recommended)
+
+Send any amount of KAS to:
+
+```
+kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85
+```
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/kaspa-org/BRD/main/brd-mobile/assets/logos/kaspa-logo-full.png" alt="Kaspa" width="64" />
+</p>
+
+### Option 2: GitHub Sponsors
+
+You can also sponsor through GitHub Sponsors if you prefer. Visit your repo's "Sponsor" button to set up recurring support.
+
+---
+
+## 📦 What Your Sponsorship Goes To
+
+- ☕ Coffee for late-night debugging sessions
+- 🚀 Infrastructure costs (servers, domains, APIs)
+- 📱 Wallet integration testing
+- 🔧 New feature development
+- 🐛 Bug fixes and improvements
+- 📖 Documentation and tutorials
+
+---
+
+## 🤝 Thank You!
+
+Every contribution, no matter how small, helps keep this project alive and improving.
+
+<p align="center">
+  <strong>Thank you for your support! 🙏</strong>
+</p>
+
+---
+
+<p align="center">
+  <a href="https://forge-os.xyz">
+    <img src="https://img.shields.io/badge/Website-Forge--OS-00C2A8?style=for-the-badge" />
+  </a>
+</p>
+
