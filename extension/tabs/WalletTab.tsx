@@ -6,6 +6,8 @@ import { useState, useEffect } from "react";
 import QRCode from "qrcode";
 import { C, mono } from "../../src/tokens";
 import { fmt, isKaspaAddress } from "../../src/helpers";
+import { fetchKasUsdPrice } from "../shared/api";
+import { fetchDagInfo, NETWORK_BPS } from "../network/kaspaClient";
 import { getSession } from "../vault/vault";
 import { buildTransaction } from "../tx/builder";
 import { dryRunValidate } from "../tx/dryRun";
@@ -14,6 +16,8 @@ import { broadcastAndPoll } from "../tx/broadcast";
 import { addPendingTx, updatePendingTx } from "../tx/store";
 import { getOrSyncUtxos, sompiToKas, syncUtxos } from "../utxo/utxoSync";
 import { getAllTokens } from "../tokens/registry";
+import { resolveTokenFromAddress, resolveTokenFromQuery } from "../swap/tokenResolver";
+import type { KaspaTokenStandard, SwapCustomToken } from "../swap/types";
 import type { PendingTx } from "../tx/types";
 import type { TokenId } from "../tokens/types";
 import type { Utxo } from "../utxo/types";
@@ -60,6 +64,11 @@ const EXPLORERS: Record<string, string> = {
   "testnet-12": "https://explorer-tn12.kaspa.org",
 };
 
+const KAS_CHART_MAX_POINTS = 72;
+const KAS_FEED_POLL_MS = 8_000;
+
+type PricePoint = { ts: number; price: number };
+
 export function WalletTab({
   address,
   balance,
@@ -87,10 +96,24 @@ export function WalletTab({
   const [utxoError, setUtxoError] = useState<string | null>(null);
   const [utxoUpdatedAt, setUtxoUpdatedAt] = useState<number | null>(null);
   const [utxoReloadNonce, setUtxoReloadNonce] = useState(0);
+  const [selectedTokenId, setSelectedTokenId] = useState<TokenId | null>(null);
+  const [liveKasPrice, setLiveKasPrice] = useState(usdPrice);
+  const [kasPriceSeries, setKasPriceSeries] = useState<PricePoint[]>([]);
+  const [kasFeedUpdatedAt, setKasFeedUpdatedAt] = useState<number | null>(null);
+  const [kasFeedError, setKasFeedError] = useState<string | null>(null);
+  const [kasChartWindow, setKasChartWindow] = useState<number>(KAS_CHART_MAX_POINTS);
+  const [kasFeedRefreshNonce, setKasFeedRefreshNonce] = useState(0);
+  const [networkDaaScore, setNetworkDaaScore] = useState<string | null>(null);
+  const [metadataAddressInput, setMetadataAddressInput] = useState("");
+  const [metadataStandard, setMetadataStandard] = useState<KaspaTokenStandard>("krc20");
+  const [resolvedMetadata, setResolvedMetadata] = useState<SwapCustomToken | null>(null);
+  const [metadataResolveBusy, setMetadataResolveBusy] = useState(false);
+  const [metadataResolveError, setMetadataResolveError] = useState<string | null>(null);
 
   // Open send/receive panel when triggered from parent (hero buttons)
   useEffect(() => {
     if (!mode) return;
+    setSelectedTokenId(null);
     if (mode === "send") {
       setShowReceive(false);
       setSendStep("form");
@@ -190,6 +213,67 @@ export function WalletTab({
       clearInterval(pollId);
     };
   }, [address, network, utxoReloadNonce]);
+
+  useEffect(() => {
+    if (usdPrice <= 0) return;
+    setLiveKasPrice(usdPrice);
+    setKasPriceSeries((prev) => {
+      const now = Date.now();
+      if (prev.length > 0 && Math.abs(prev[prev.length - 1].price - usdPrice) < 1e-8) return prev;
+      const next = [...prev, { ts: now, price: usdPrice }];
+      return next.slice(-KAS_CHART_MAX_POINTS);
+    });
+    setKasFeedUpdatedAt(Date.now());
+  }, [usdPrice]);
+
+  useEffect(() => {
+    if (selectedTokenId !== "KAS") return;
+    let alive = true;
+
+    const pollKasFeed = async () => {
+      try {
+        const [price, dagInfo] = await Promise.all([
+          fetchKasUsdPrice(network),
+          fetchDagInfo(network),
+        ]);
+        if (!alive) return;
+        if (price > 0) {
+          setLiveKasPrice(price);
+          setKasPriceSeries((prev) => {
+            const now = Date.now();
+            if (prev.length > 0 && Math.abs(prev[prev.length - 1].price - price) < 1e-8) return prev;
+            const next = [...prev, { ts: now, price }];
+            return next.slice(-KAS_CHART_MAX_POINTS);
+          });
+          setKasFeedUpdatedAt(Date.now());
+          setKasFeedError(null);
+        }
+        if (dagInfo?.virtualDaaScore) {
+          setNetworkDaaScore(dagInfo.virtualDaaScore);
+        }
+      } catch (err) {
+        if (!alive) return;
+        setKasFeedError(err instanceof Error ? err.message : "Live feed unavailable.");
+      }
+    };
+
+    pollKasFeed().catch(() => {});
+    const pollId = window.setInterval(() => {
+      pollKasFeed().catch(() => {});
+    }, KAS_FEED_POLL_MS);
+
+    return () => {
+      alive = false;
+      clearInterval(pollId);
+    };
+  }, [network, selectedTokenId, kasFeedRefreshNonce]);
+
+  useEffect(() => {
+    if (!selectedTokenId) return;
+    setMetadataAddressInput("");
+    setResolvedMetadata(null);
+    setMetadataResolveError(null);
+  }, [selectedTokenId, network]);
 
   const session = getSession();
   const isManaged = Boolean(session?.mnemonic);
@@ -303,6 +387,54 @@ export function WalletTab({
     try { await navigator.clipboard.writeText(address); setAddrCopied(true); setTimeout(() => setAddrCopied(false), 2000); } catch { /* noop */ }
   };
 
+  const openTokenDetails = (tokenId: TokenId) => {
+    setSelectedTokenId(tokenId);
+  };
+
+  const closeTokenDetails = () => {
+    setSelectedTokenId(null);
+  };
+
+  const resolveMetadataToken = async () => {
+    const candidate = metadataAddressInput.trim();
+    if (!candidate) {
+      setMetadataResolveError("Paste a token address or search by symbol.");
+      return;
+    }
+    setMetadataResolveBusy(true);
+    setMetadataResolveError(null);
+    try {
+      const queryHit = await resolveTokenFromQuery(candidate, metadataStandard, network);
+      const resolved = queryHit ?? await resolveTokenFromAddress(candidate, metadataStandard, network);
+      setResolvedMetadata(resolved);
+    } catch (err) {
+      setResolvedMetadata(null);
+      setMetadataResolveError(err instanceof Error ? err.message : "Metadata lookup failed.");
+    } finally {
+      setMetadataResolveBusy(false);
+    }
+  };
+
+  const pasteTokenAddress = async () => {
+    if (!navigator?.clipboard?.readText) {
+      setMetadataResolveError("Clipboard read is unavailable in this browser.");
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      const trimmed = text.trim();
+      if (!trimmed) {
+        setMetadataResolveError("Clipboard is empty.");
+        return;
+      }
+      setMetadataAddressInput(trimmed);
+      setMetadataResolveError(null);
+      setResolvedMetadata(null);
+    } catch {
+      setMetadataResolveError("Failed to read clipboard.");
+    }
+  };
+
   const displayTokens = [...getAllTokens()].sort((a, b) => {
     if (a.id === "KAS") return -1;
     if (b.id === "KAS") return 1;
@@ -324,6 +456,7 @@ export function WalletTab({
   const utxoTotalSompi = utxos.reduce((acc, u) => acc + u.amount, 0n);
   const utxoTotalKas = sompiToKas(utxoTotalSompi);
   const utxoLargestKas = utxos.length ? sompiToKas(utxos[0].amount) : 0;
+  const utxoAverageKas = utxos.length ? utxoTotalKas / utxos.length : 0;
   const covenantUtxoCount = utxos.filter((u) => (u.scriptClass ?? "standard") === "covenant").length;
   const standardUtxoCount = utxos.length - covenantUtxoCount;
   const utxoUpdatedLabel = utxoUpdatedAt
@@ -338,10 +471,31 @@ export function WalletTab({
   const masked = (value: string) => (hideBalances ? "••••" : value);
   const maskedKas = (amount: number, digits: number) => (hideBalances ? "•••• KAS" : `${fmt(amount, digits)} KAS`);
   const maskedUsd = (amount: number, digits: number) => (hideBalances ? "$••••" : `$${fmt(amount, digits)}`);
+  const selectedToken = selectedTokenId ? displayTokens.find((t) => t.id === selectedTokenId) ?? null : null;
+  const showTokenOverlay = Boolean(selectedToken);
   const showActionOverlay = sendStep !== "idle" || showReceive;
+  const kasSeries = kasPriceSeries.length > 0
+    ? kasPriceSeries
+    : liveKasPrice > 0
+      ? [{ ts: Date.now(), price: liveKasPrice }]
+      : [];
+  const displayedKasSeries = kasSeries.slice(-Math.max(2, kasChartWindow));
+  const kasFirstPrice = displayedKasSeries.length > 0 ? displayedKasSeries[0].price : 0;
+  const kasLastPrice = displayedKasSeries.length > 0 ? displayedKasSeries[displayedKasSeries.length - 1].price : 0;
+  const kasPriceDeltaPct = kasFirstPrice > 0
+    ? ((kasLastPrice - kasFirstPrice) / kasFirstPrice) * 100
+    : 0;
+  const kasSeriesHigh = displayedKasSeries.length > 0 ? Math.max(...displayedKasSeries.map((p) => p.price)) : 0;
+  const kasSeriesLow = displayedKasSeries.length > 0 ? Math.min(...displayedKasSeries.map((p) => p.price)) : 0;
+  const kasWalletBalance = balance ?? 0;
+  const kasWalletUsdValue = kasWalletBalance * (liveKasPrice > 0 ? liveKasPrice : 0);
   const canDismissSendOverlay = sendStep === "form" || sendStep === "error" || sendStep === "done";
-  const canDismissOverlay = showReceive || canDismissSendOverlay;
+  const canDismissOverlay = showTokenOverlay || showReceive || canDismissSendOverlay;
   const dismissOverlay = () => {
+    if (showTokenOverlay) {
+      closeTokenDetails();
+      return;
+    }
     if (showReceive) setShowReceive(false);
     if (sendStep !== "idle" && canDismissSendOverlay) resetSend();
   };
@@ -489,9 +643,229 @@ export function WalletTab({
     </>
   );
 
+  const tokenDetailsPanel = selectedToken ? (
+    <div style={panel()}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={sectionTitle}>TOKEN ANALYTICS</div>
+        <button
+          onClick={closeTokenDetails}
+          style={{ background: "none", border: "none", color: C.dim, fontSize: 9, cursor: "pointer", ...mono }}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div style={{ ...insetCard(), display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <img
+            src={tokenLogoById[selectedToken.id] ?? tokenLogoById.KAS}
+            alt={`${selectedToken.symbol} logo`}
+            style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "contain" }}
+          />
+          <div>
+            <div style={{ fontSize: 11, color: C.text, fontWeight: 700, letterSpacing: "0.05em", ...mono }}>
+              {selectedToken.symbol}
+            </div>
+            <div style={{ fontSize: 8, color: C.dim }}>
+              {selectedToken.name} · {network.toUpperCase()}
+            </div>
+          </div>
+        </div>
+        <div
+          style={{
+            ...outlineButton(selectedToken.id === "KAS" ? C.ok : C.warn, true),
+            padding: "4px 7px",
+            fontSize: 8,
+            color: selectedToken.id === "KAS" ? C.ok : C.warn,
+          }}
+        >
+          {selectedToken.id === "KAS" ? "LIVE FEED" : "METADATA FEED"}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
+        <MetricTile
+          label={selectedToken.id === "KAS" ? "LIVE PRICE" : "TOKEN STATUS"}
+          value={selectedToken.id === "KAS" ? maskedUsd(liveKasPrice || usdPrice || 0, 4) : (selectedToken.enabled ? "ENABLED" : "READ-ONLY")}
+          tone={selectedToken.id === "KAS" ? C.accent : selectedToken.enabled ? C.ok : C.warn}
+        />
+        <MetricTile
+          label={selectedToken.id === "KAS" ? "SESSION Δ" : "DECIMALS"}
+          value={selectedToken.id === "KAS" ? `${hideBalances ? "••••" : `${kasPriceDeltaPct >= 0 ? "+" : ""}${fmt(kasPriceDeltaPct, 2)}%`}` : String(selectedToken.decimals)}
+          tone={selectedToken.id === "KAS" ? (kasPriceDeltaPct >= 0 ? C.ok : C.danger) : C.text}
+        />
+        <MetricTile
+          label={selectedToken.id === "KAS" ? "BALANCE" : "TOKEN ID"}
+          value={selectedToken.id === "KAS"
+            ? maskedKas(kasWalletBalance, 4)
+            : selectedToken.id}
+          tone={C.text}
+        />
+        <MetricTile
+          label={selectedToken.id === "KAS" ? "USD VALUE" : "FEED UPDATE"}
+          value={selectedToken.id === "KAS"
+            ? maskedUsd(kasWalletUsdValue, 2)
+            : (kasFeedUpdatedAt ? new Date(kasFeedUpdatedAt).toLocaleTimeString([], { hour12: false }) : "—")}
+          tone={selectedToken.id === "KAS" ? C.accent : C.dim}
+        />
+      </div>
+
+      <div style={insetCard()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.08em", display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: kasFeedError ? C.danger : C.ok,
+                boxShadow: kasFeedError ? `0 0 6px ${C.danger}` : `0 0 6px ${C.ok}`,
+              }}
+            />
+            {selectedToken.id === "KAS" ? "REAL-TIME KAS/USD CHART" : "BASE LAYER LIVE CHART"}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {([15, 45, KAS_CHART_MAX_POINTS] as const).map((windowSize) => (
+              <button
+                key={windowSize}
+                onClick={() => setKasChartWindow(windowSize)}
+                style={{
+                  ...outlineButton(kasChartWindow === windowSize ? C.accent : C.dim, true),
+                  padding: "3px 6px",
+                  fontSize: 8,
+                  color: kasChartWindow === windowSize ? C.accent : C.dim,
+                }}
+              >
+                {windowSize === 15 ? "2M" : windowSize === 45 ? "6M" : "10M"}
+              </button>
+            ))}
+            <button
+              onClick={() => setKasFeedRefreshNonce((value) => value + 1)}
+              style={{ ...outlineButton(C.dim, true), padding: "3px 6px", fontSize: 8, color: C.dim }}
+            >
+              REFRESH
+            </button>
+          </div>
+        </div>
+        <LiveLineChart points={displayedKasSeries} color={C.accent} />
+        <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", fontSize: 8, color: C.dim }}>
+          <span>LOW {maskedUsd(kasSeriesLow, 4)}</span>
+          <span>HIGH {maskedUsd(kasSeriesHigh, 4)}</span>
+        </div>
+        <div style={{ marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 8, color: C.muted }}>
+          <span>{kasFeedUpdatedAt ? `updated ${new Date(kasFeedUpdatedAt).toLocaleTimeString([], { hour12: false })}` : "awaiting feed"}</span>
+          <span>{displayedKasSeries.length} ticks</span>
+        </div>
+        {selectedToken.id !== "KAS" && (
+          <div style={{ marginTop: 6, fontSize: 8, color: C.dim, lineHeight: 1.45 }}>
+            Spot chart reflects live Kaspa base feed. Token-specific pricing requires a trusted market route.
+          </div>
+        )}
+      </div>
+
+      <div style={insetCard()}>
+        <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.08em", marginBottom: 5 }}>ON-CHAIN TECHNICALS</div>
+        <div style={{ fontSize: 8, color: C.text, lineHeight: 1.55 }}>
+          Network BPS: <span style={{ color: C.accent }}>{NETWORK_BPS[network] ?? 10}</span>
+        </div>
+        <div style={{ fontSize: 8, color: C.text, lineHeight: 1.55 }}>
+          Virtual DAA: <span style={{ color: C.accent }}>{networkDaaScore ?? "—"}</span>
+        </div>
+        <div style={{ fontSize: 8, color: C.text, lineHeight: 1.55 }}>
+          Spendable UTXOs: <span style={{ color: C.ok }}>{standardUtxoCount}</span> · Covenant UTXOs:{" "}
+          <span style={{ color: covenantUtxoCount > 0 ? C.warn : C.dim }}>{covenantUtxoCount}</span>
+        </div>
+        <div style={{ fontSize: 8, color: C.text, lineHeight: 1.55 }}>
+          Largest UTXO: <span style={{ color: C.accent }}>{maskedKas(utxoLargestKas, 4)}</span> · Avg UTXO:{" "}
+          <span style={{ color: C.accent }}>{maskedKas(utxoAverageKas, 4)}</span>
+        </div>
+        {kasFeedError && (
+          <div style={{ fontSize: 8, color: C.danger, marginTop: 5, lineHeight: 1.45 }}>
+            Feed warning: {kasFeedError}
+          </div>
+        )}
+      </div>
+
+      {selectedToken.id !== "KAS" && (
+        <div style={insetCard()}>
+          <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.08em", marginBottom: 6 }}>
+            KRC TOKEN ADDRESS LOOKUP
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            <input
+              value={metadataAddressInput}
+              onChange={(event) => setMetadataAddressInput(event.target.value)}
+              placeholder="Search symbol/name or paste token address…"
+              style={{ ...inputStyle(Boolean(metadataResolveError)), flex: 1, marginBottom: 0 }}
+            />
+            <button
+              onClick={pasteTokenAddress}
+              style={{ ...outlineButton(C.dim, true), padding: "7px 8px", color: C.dim, fontSize: 8 }}
+            >
+              PASTE
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            {(["krc20", "krc721"] as KaspaTokenStandard[]).map((standard) => (
+              <button
+                key={standard}
+                onClick={() => setMetadataStandard(standard)}
+                style={{
+                  ...outlineButton(metadataStandard === standard ? C.accent : C.dim, true),
+                  padding: "6px 8px",
+                  color: metadataStandard === standard ? C.accent : C.dim,
+                  fontSize: 8,
+                  flex: 1,
+                }}
+              >
+                {standard.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={resolveMetadataToken}
+            disabled={metadataResolveBusy || !metadataAddressInput.trim()}
+            style={{ ...submitBtn(Boolean(metadataAddressInput.trim()) && !metadataResolveBusy), marginTop: 0 }}
+          >
+            {metadataResolveBusy ? "RESOLVING…" : "RESOLVE TOKEN METADATA"}
+          </button>
+          {metadataResolveError && (
+            <div style={{ fontSize: 8, color: C.danger, marginTop: 6, lineHeight: 1.45 }}>
+              {metadataResolveError}
+            </div>
+          )}
+          {resolvedMetadata && (
+            <div style={{ ...insetCard(), marginTop: 7 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                <img
+                  src={resolvedMetadata.logoUri}
+                  alt={`${resolvedMetadata.symbol} logo`}
+                  style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover", border: `1px solid ${C.border}` }}
+                />
+                <div>
+                  <div style={{ fontSize: 10, color: C.text, fontWeight: 700, ...mono }}>{resolvedMetadata.symbol}</div>
+                  <div style={{ fontSize: 8, color: C.dim }}>{resolvedMetadata.name}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 8, color: C.text, lineHeight: 1.5, wordBreak: "break-all" }}>
+                {resolvedMetadata.address}
+              </div>
+              <div style={{ fontSize: 8, color: C.dim, marginTop: 4 }}>
+                Standard: {resolvedMetadata.standard.toUpperCase()} · Decimals: {resolvedMetadata.decimals}
+              </div>
+            </div>
+          )}
+          <div style={{ fontSize: 7, color: C.muted, lineHeight: 1.45, marginTop: 6 }}>
+            Resolver is env-driven with bounded LRU + endpoint health scoring for low-latency repeated lookups.
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div style={{ ...popupTabStack, position: "relative" }}>
-      {showActionOverlay && (
+      {(showActionOverlay || showTokenOverlay) && (
         <div
           style={overlayBackdrop}
           onClick={(event) => {
@@ -501,7 +875,7 @@ export function WalletTab({
           }}
         >
           <div style={overlayCard}>
-            {actionPanels}
+            {showTokenOverlay ? tokenDetailsPanel : actionPanels}
           </div>
         </div>
       )}
@@ -549,19 +923,35 @@ export function WalletTab({
           const tokenAmountLabelRaw = token.id === "KAS" ? fmt(tokenBalanceUnits, 4) : fmt(tokenBalanceUnits, 2);
           const tokenAmountLabel = masked(tokenAmountLabelRaw);
           return (
-          <div key={token.id} style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            background: "linear-gradient(160deg, rgba(15,24,36,0.86), rgba(8,14,22,0.88))",
-            border: `1px solid ${C.border}`,
-            borderRadius: 12,
-            padding: "10px 11px",
-            marginTop: idx > 0 ? 8 : 0,
-            opacity: isKasToken ? 1 : token.enabled ? 1 : 0.58,
-            position: "relative",
-            zIndex: 1,
-          }}>
+          <button
+            key={token.id}
+            onClick={() => openTokenDetails(token.id as TokenId)}
+            style={{
+              width: "100%",
+              border: "none",
+              textAlign: "left",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: "linear-gradient(160deg, rgba(15,24,36,0.86), rgba(8,14,22,0.88))",
+              borderRadius: 12,
+              padding: "10px 11px",
+              marginTop: idx > 0 ? 8 : 0,
+              opacity: isKasToken ? 1 : token.enabled ? 1 : 0.58,
+              position: "relative",
+              zIndex: 1,
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                border: `1px solid ${selectedTokenId === token.id ? `${C.accent}75` : C.border}`,
+                borderRadius: 12,
+                pointerEvents: "none",
+              }}
+            />
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{
                 width: logoBadgeSize,
@@ -593,7 +983,7 @@ export function WalletTab({
                 <div style={{ fontSize: 9, color: C.dim, letterSpacing: "0.03em" }}>{token.name}</div>
               </div>
             </div>
-            <div style={{ textAlign: "right" }}>
+            <div style={{ textAlign: "right", paddingRight: 12 }}>
               <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>
                 {tokenAmountLabel}
               </div>
@@ -603,7 +993,8 @@ export function WalletTab({
                 </div>
               )}
             </div>
-          </div>
+            <div style={{ fontSize: 10, color: C.dim, ...mono }}>→</div>
+          </button>
         )})}
 
         {address && (
@@ -749,6 +1140,58 @@ const overlayCard: React.CSSProperties = {
   maxHeight: "calc(100vh - 26px)",
   overflowY: "auto",
 };
+
+function MetricTile({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div style={{ ...insetCard(), padding: "7px 8px" }}>
+      <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.07em", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 10, color: tone, fontWeight: 700, ...mono }}>{value}</div>
+    </div>
+  );
+}
+
+function LiveLineChart({ points, color }: { points: PricePoint[]; color: string }) {
+  const width = 340;
+  const height = 118;
+  const pad = 10;
+  if (points.length < 2) {
+    return (
+      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: C.dim, fontSize: 8 }}>
+        Waiting for enough live points…
+      </div>
+    );
+  }
+
+  const min = Math.min(...points.map((point) => point.price));
+  const max = Math.max(...points.map((point) => point.price));
+  const range = Math.max(1e-9, max - min);
+  const usableW = width - pad * 2;
+  const usableH = height - pad * 2;
+  const stepX = usableW / Math.max(1, points.length - 1);
+
+  const line = points
+    .map((point, index) => {
+      const x = pad + stepX * index;
+      const y = pad + (max - point.price) / range * usableH;
+      return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+    })
+    .join(" ");
+
+  const area = `${line} L ${pad + usableW} ${height - pad} L ${pad} ${height - pad} Z`;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="Live token chart">
+      <defs>
+        <linearGradient id="wallet-chart-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#wallet-chart-fill)" />
+      <path d={line} fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 function StatusCard({ icon, title, sub, color }: { icon: string; title: string; sub: string; color: string }) {
   return (
