@@ -15,7 +15,6 @@ If you find this project valuable, consider supporting its continued development
 ---
 
 ## 💚 How to Sponsor
-### Option 1: Kaspa (Recommended)
 
 Send any amount of KAS to:
 
