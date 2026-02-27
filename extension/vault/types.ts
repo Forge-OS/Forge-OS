@@ -1,4 +1,5 @@
 // Vault type definitions — no plaintext secrets ever leave this boundary.
+import type { KaspaDerivationMeta } from "../../src/wallet/derivation";
 
 /**
  * Persisted to chrome.storage.local.
@@ -25,18 +26,25 @@ export interface EncryptedVault {
 export interface VaultPayload {
   version: 1;
   mnemonic: string;
+  /** Optional BIP39 passphrase ("25th word"), encrypted inside the vault payload. */
+  mnemonicPassphrase?: string;
+  /** Selected derivation metadata for address/signing reconstruction. */
+  derivation?: KaspaDerivationMeta;
   address: string;      // Derived receive address (index 0)
-  network: "mainnet" | "testnet-10";
-  derivationPath: string; // "m/44'/111'/0'"
-  addressIndex: number;   // 0
+  network: "mainnet" | "testnet-10" | "testnet-11";
+  derivationPath: string; // legacy: "m/44'/111'/0'"
+  addressIndex: number;   // legacy: 0
 }
 
 /**
- * In-memory unlocked session — never persisted to any storage.
- * Cleared immediately on lock.
+ * Runtime unlocked session.
+ * Primary copy lives in memory; optional session-scoped cache may exist when
+ * user enables keep-unlocked behavior.
  */
 export interface UnlockedSession {
   mnemonic: string;
+  mnemonicPassphrase?: string;
+  derivation?: KaspaDerivationMeta;
   address: string;
   network: string;
   autoLockAt: number; // Unix ms — session expires at this timestamp

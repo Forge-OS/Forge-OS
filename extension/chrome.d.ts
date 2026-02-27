@@ -24,6 +24,20 @@ declare global {
     tabs: typeof Browser.tabs & {
       sendMessage(tabId: number, message: any): Promise<any>;
     };
+    // chrome.windows — create/manage browser windows
+    windows: {
+      create(createData: {
+        url?: string;
+        type?: "normal" | "popup" | "panel";
+        width?: number;
+        height?: number;
+        focused?: boolean;
+      }): Promise<{ id?: number }>;
+    };
+    // chrome.runtime.getURL — convert extension-relative path to full URL
+    runtime: typeof Browser.runtime & {
+      getURL(path: string): string;
+    };
   };
 }
 

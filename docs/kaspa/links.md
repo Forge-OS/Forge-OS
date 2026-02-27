@@ -16,6 +16,15 @@
 - Rusty Kaspa README (node setup): https://github.com/kaspanet/rusty-kaspa#readme
 - Kaspa NG / Kaspad: https://github.com/kaspanet/kaspad
 
+## Developer Resource Picks (Kaspa.org)
+- Main Kaspa Node Repository (latest node advancements): https://github.com/kaspanet/rusty-kaspa
+- DeepWiki (Rusty Kaspa architecture/reference map): https://deepwiki.com/kaspanet/rusty-kaspa
+- KDApp (high-frequency interactive dApps on Kaspa BlockDAG): https://github.com/michaelsutton/kdapp
+- KKluster Kaspa JS Utilities (TypeScript monorepo + skeleton project): https://github.com/K-Kluster/kaspa-js/
+- Kaspa Improvement Proposals (KIP): https://github.com/kaspanet/kips
+- WASM Integration Guides (JavaScript/TypeScript): https://kaspa.aspectron.org
+- Kaspa SQL Indexer: https://github.com/supertypo/simply-kaspa-indexer
+
 ## SDKs and Bridges
 - Kaspa-JS (Node.js/TypeScript SDK): https://github.com/kaspanet/kaspa-js
 - WASM SDK (Rust -> JS bridge): https://github.com/kaspanet/rusty-kaspa/tree/master/wasm

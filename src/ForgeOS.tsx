@@ -10,6 +10,7 @@ import { KASPA_NETWORK_PROFILES } from "./kaspa/network";
 import { ForgeAtmosphere } from "./components/chrome/ForgeAtmosphere";
 import { Header } from "./components/Header";
 import { SignInModal } from "./components/SignInModal";
+import { ForgeOSConnectModal } from "./components/ForgeOSConnectModal";
 import { loadSession, clearSession, type ForgeSession } from "./auth/siwa";
 import { WalletAdapter } from "./wallet/WalletAdapter";
 
@@ -20,6 +21,8 @@ export default function ForgeOS() {
   const [wallet, setWallet] = useState(null as any);
   const [siwaSession, setSiwaSession] = useState<ForgeSession | null>(() => loadSession());
   const [showSignIn, setShowSignIn] = useState(false);
+  const [showForgeConnect, setShowForgeConnect] = useState(false);
+  const [autoConnectAttempted, setAutoConnectAttempted] = useState(false);
   const [agents, setAgents] = useState<any[]>(() => {
     try {
       if (typeof window === "undefined") return [];
@@ -153,31 +156,75 @@ export default function ForgeOS() {
   }, []);
 
   useEffect(() => {
-    try { window.localStorage.setItem(FORGE_AGENTS_KEY, JSON.stringify(agents)); } catch {}
-  }, [agents]);
+    try {
+      window.localStorage.setItem(FORGE_AGENTS_KEY, JSON.stringify(agents));
+      window.postMessage(
+        {
+          __forgeos__: true,
+          type: "FORGEOS_AGENT_SNAPSHOT",
+          agents,
+          activeAgentId,
+          network: DEFAULT_NETWORK,
+          updatedAt: Date.now(),
+        },
+        "*",
+      );
+    } catch {}
+  }, [agents, activeAgentId]);
 
   useEffect(() => {
     try { window.localStorage.setItem(FORGE_ACTIVE_KEY, activeAgentId); } catch {}
   }, [activeAgentId]);
 
+  useEffect(() => {
+    if (wallet || autoConnectAttempted || showSignIn || showForgeConnect) return;
+    let cancelled = false;
+    setAutoConnectAttempted(true);
+
+    (async () => {
+      const status = await WalletAdapter.probeForgeOSBridgeStatus(900).catch(() => null);
+      if (cancelled || !status) return;
+      if (status.transport !== "none") {
+        setShowForgeConnect(true);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [wallet, autoConnectAttempted, showSignIn, showForgeConnect]);
+
   if (!wallet) return (
     <>
       <ForgeAtmosphere />
-      <Header
-        wallet={siwaSession ? { address: siwaSession.address, network: siwaSession.network, provider: siwaSession.provider } : null}
-        onSignInClick={() => setShowSignIn(true)}
-        onReconnect={handleReconnect}
-        onDisconnect={handleDisconnect}
-      />
-      <WalletGate onConnect={handleConnect} onSignInClick={() => setShowSignIn(true)} />
-      {showSignIn && (
-        <SignInModal onSignIn={handleSignIn} onClose={() => setShowSignIn(false)} />
-      )}
+      <div className="forge-ui-scale">
+        <Header
+          wallet={siwaSession ? { address: siwaSession.address, network: siwaSession.network, provider: siwaSession.provider } : null}
+          onSignInClick={() => setShowForgeConnect(true)}
+          onReconnect={handleReconnect}
+          onDisconnect={handleDisconnect}
+        />
+        <WalletGate onConnect={handleConnect} onSignInClick={() => setShowSignIn(true)} />
+        {showForgeConnect && (
+          <ForgeOSConnectModal
+            onSignIn={(session, walletInfo) => {
+              setShowForgeConnect(false);
+              handleSignIn(session, walletInfo);
+            }}
+            onOpenFullModal={() => {
+              setShowForgeConnect(false);
+              setShowSignIn(true);
+            }}
+            onClose={() => setShowForgeConnect(false)}
+          />
+        )}
+        {showSignIn && (
+          <SignInModal onSignIn={handleSignIn} onClose={() => setShowSignIn(false)} />
+        )}
+      </div>
     </>
   );
 
   return(
-    <div className="forge-shell" style={{color:C.text}}>
+    <div className="forge-shell forge-ui-scale" style={{color:C.text}}>
       <ForgeAtmosphere />
       <div className="forge-content" style={{minHeight:"100vh"}}>
       {/* Topbar */}

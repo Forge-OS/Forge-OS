@@ -7,7 +7,7 @@ import { broadcastTx, fetchTransaction } from "../network/kaspaClient";
 import { updatePendingTx } from "./store";
 import { invalidateUtxoCache } from "../utxo/utxoSync";
 
-const CONFIRM_POLL_INTERVAL_MS = 3_000;   // poll every 3 s
+const CONFIRM_POLL_INTERVAL_MS = 1_000;   // poll every 1 s — Kaspa confirms at 10 BPS
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;    // give up after 5 min
 
 /**

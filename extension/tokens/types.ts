@@ -1,7 +1,7 @@
 // Token registry types.
 // All token amounts use bigint + decimals (never float arithmetic on balances).
 
-export type TokenId = "KAS" | "USDT" | "USDC";
+export type TokenId = "KAS" | "USDT" | "USDC" | "ZRX";
 
 export interface Token {
   id: TokenId;

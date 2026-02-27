@@ -20,6 +20,7 @@ import {
 } from "../wallet/KaspaWalletManager";
 
 type Step = "choose" | "seed_length" | "backup" | "verify" | "import" | "ready";
+const VALID_BIP39_COUNTS = new Set([12, 15, 18, 21, 24]);
 
 interface Props {
   onConnect: (session: any) => void;
@@ -54,6 +55,7 @@ export function WalletCreator({ onConnect, onClose }: Props) {
   const [wordCount, setWordCount] = useState<12 | 24>(12);
   const [backupConfirmed, setBackupConfirmed] = useState(false);
   const [importPhrase, setImportPhrase] = useState("");
+  const [importPassphrase, setImportPassphrase] = useState("");
   const [copied, setCopied] = useState(false);
 
   // Backup quiz state
@@ -112,8 +114,11 @@ export function WalletCreator({ onConnect, onClose }: Props) {
     setBusy(true);
     setErr("");
     try {
-      const data = await importWallet(importPhrase, DEFAULT_NETWORK);
+      const data = await importWallet(importPhrase, DEFAULT_NETWORK, {
+        mnemonicPassphrase: importPassphrase || undefined,
+      });
       setWallet(data);
+      setImportPassphrase("");
       setStep("ready");
     } catch (e: any) {
       setErr(e?.message || "Invalid seed phrase.");
@@ -339,7 +344,7 @@ export function WalletCreator({ onConnect, onClose }: Props) {
             {err && <ErrorBanner message={err} />}
 
             <div style={{ display: "flex", gap: 8 }}>
-              <Btn onClick={() => setStep("choose")} variant="ghost" size="sm" style={{ flex: 1 }}>
+              <Btn onClick={() => { setImportPassphrase(""); setStep("choose"); }} variant="ghost" size="sm" style={{ flex: 1 }}>
                 ← BACK
               </Btn>
               <Btn
@@ -546,7 +551,7 @@ export function WalletCreator({ onConnect, onClose }: Props) {
                 Import Seed Phrase
               </div>
               <div style={{ fontSize: 10, color: C.dim }}>
-                Paste your 12 or 24-word Kaspa BIP39 seed phrase to derive your address.
+                Paste a BIP39 seed phrase (12/15/18/21/24 words) to derive your address.
               </div>
             </div>
 
@@ -574,13 +579,24 @@ export function WalletCreator({ onConnect, onClose }: Props) {
               }}
             />
 
+            <input
+              type="password"
+              value={importPassphrase}
+              onChange={(e) => {
+                setImportPassphrase(e.target.value);
+                setErr("");
+              }}
+              placeholder="Optional BIP39 passphrase / 25th word"
+              style={inputStyle}
+            />
+
             {/* Word count indicator */}
             {importPhrase.trim() && (() => {
               const n = importPhrase.trim().split(/\s+/).length;
-              const valid = n === 12 || n === 24;
+              const valid = VALID_BIP39_COUNTS.has(n);
               return (
                 <div style={{ fontSize: 9, color: valid ? C.ok : C.warn, ...mono }}>
-                  {n} words {valid ? "✓" : "(need 12 or 24)"}
+                  {n} words {valid ? "✓" : "(need 12/15/18/21/24)"}
                 </div>
               );
             })()}
@@ -595,10 +611,7 @@ export function WalletCreator({ onConnect, onClose }: Props) {
                 onClick={handleImport}
                 disabled={
                   busy ||
-                  !(
-                    importPhrase.trim().split(/\s+/).length === 12 ||
-                    importPhrase.trim().split(/\s+/).length === 24
-                  )
+                  !VALID_BIP39_COUNTS.has(importPhrase.trim().split(/\s+/).length)
                 }
                 variant="primary"
                 size="sm"

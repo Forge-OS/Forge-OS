@@ -12,16 +12,50 @@ import { selectUtxos, kasToSompi } from "../utxo/utxoSync";
 import { estimateFee } from "../network/kaspaClient";
 import { getLockedUtxoKeys } from "./store";
 import { getOrSyncUtxos } from "../utxo/utxoSync";
+import { loadKaspaWasm } from "../../src/wallet/kaspaWasmLoader";
+
+const ENV = (import.meta as any)?.env ?? {};
+
+function readIntEnv(name: string, fallback: number, min: number, max: number): number {
+  const n = Number(ENV?.[name]);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+// Fee policy controls (env configurable for production tuning).
+const TX_FEE_SAFETY_BPS = readIntEnv("VITE_EXT_TX_FEE_SAFETY_BPS", 11_500, 10_000, 30_000);
+const TX_FEE_MIN_SOMPI = BigInt(readIntEnv("VITE_EXT_TX_FEE_MIN_SOMPI", 1_000, 1, 1_000_000_000));
+const TX_FEE_MAX_SOMPI = BigInt(readIntEnv("VITE_EXT_TX_FEE_MAX_SOMPI", 200_000_000, 1_000, 5_000_000_000));
+
+function applyFeePolicy(baseFee: bigint): bigint {
+  const buffered = (baseFee * BigInt(TX_FEE_SAFETY_BPS) + 9_999n) / 10_000n;
+  if (buffered < TX_FEE_MIN_SOMPI) return TX_FEE_MIN_SOMPI;
+  if (buffered > TX_FEE_MAX_SOMPI) return TX_FEE_MAX_SOMPI;
+  return buffered;
+}
+
+// ── Platform (treasury) fee ───────────────────────────────────────────────────
+// Set TREASURY_ADDRESS to a valid Kaspa address to enable the platform fee.
+// Leave empty to disable (no fee output will be added).
+const TREASURY_ADDRESS = ""; // TODO: set to Forge-OS treasury kaspa: address
+const PLATFORM_FEE_BPS = 30;               // 0.3 % of send amount
+const MIN_PLATFORM_FEE_SOMPI = 100_000n;   // 0.001 KAS floor
+const MAX_PLATFORM_FEE_SOMPI = 100_000_000n; // 1 KAS ceiling
+
+/**
+ * Calculate the platform fee for a given send amount.
+ * Returns null when TREASURY_ADDRESS is not configured.
+ */
+function calcPlatformFee(amountSompi: bigint): bigint | null {
+  if (!TREASURY_ADDRESS) return null;
+  const bpsFee = (amountSompi * BigInt(PLATFORM_FEE_BPS)) / 10_000n;
+  if (bpsFee < MIN_PLATFORM_FEE_SOMPI) return MIN_PLATFORM_FEE_SOMPI;
+  if (bpsFee > MAX_PLATFORM_FEE_SOMPI) return MAX_PLATFORM_FEE_SOMPI;
+  return bpsFee;
+}
 
 // Lazy-load kaspa-wasm (heavy WASM binary — only when actually sending)
-async function loadKaspa() {
-  const kaspa = await import("kaspa-wasm");
-  const initFn = (kaspa as Record<string, unknown>).default || (kaspa as Record<string, unknown>).init;
-  if (typeof initFn === "function") {
-    try { await (initFn as () => Promise<void>)(); } catch { /* idempotent */ }
-  }
-  return kaspa;
-}
+const loadKaspa = loadKaspaWasm;
 
 /**
  * Build a transaction for the given send parameters.
@@ -44,36 +78,51 @@ export async function buildTransaction(
   const amountSompi = kasToSompi(amountKas);
   if (amountSompi <= 0n) throw new Error("AMOUNT_TOO_SMALL");
 
+  // Calculate platform fee (null if treasury not configured)
+  const platformFee = calcPlatformFee(amountSompi);
+
+  // Total that must be covered by UTXOs (recipient + optional treasury)
+  const spendSompi = amountSompi + (platformFee ?? 0n);
+
+  // Output count: recipient + change + optional treasury
+  const outputCount = platformFee ? 3 : 2;
+
   // Get locked UTXOs (inputs already reserved by in-flight txs)
   const lockedKeys = await getLockedUtxoKeys(fromAddress);
 
   // Fetch or use cached UTXO set
   const utxoSet = await getOrSyncUtxos(fromAddress, network);
 
-  // Estimate fee with 2 outputs (destination + change) and N inputs
+  // Estimate fee with N outputs (destination [+ treasury] + change) and 1 input
   // We'll select inputs first with a preliminary fee estimate, then refine.
-  const preliminary = await estimateFee(1, 2, network);
+  const preliminary = applyFeePolicy(await estimateFee(1, outputCount, network));
   const { selected, total } = selectUtxos(
     utxoSet.utxos,
-    amountSompi,
+    spendSompi,
     preliminary,
     lockedKeys,
   );
 
   // Refine fee with actual input count
-  const refinedFee = await estimateFee(selected.length, 2, network);
+  const refinedFee = applyFeePolicy(await estimateFee(selected.length, outputCount, network));
 
   // Re-select with refined fee if coverage changed
   let inputs = selected;
   let inputTotal = total;
-  if (total < amountSompi + refinedFee) {
-    const refined = selectUtxos(utxoSet.utxos, amountSompi, refinedFee, lockedKeys);
+  if (total < spendSompi + refinedFee) {
+    const refined = selectUtxos(utxoSet.utxos, spendSompi, refinedFee, lockedKeys);
     inputs = refined.selected;
     inputTotal = refined.total;
   }
 
-  const changeAmount = inputTotal - amountSompi - refinedFee;
+  const changeAmount = inputTotal - spendSompi - refinedFee;
   const outputs: TxOutput[] = [{ address: toAddress, amount: amountSompi }];
+
+  // Add treasury output when platform fee is active
+  if (platformFee && TREASURY_ADDRESS) {
+    outputs.push({ address: TREASURY_ADDRESS, amount: platformFee });
+  }
+
   const changeOutput: TxOutput | null =
     changeAmount > 0n ? { address: fromAddress, amount: changeAmount } : null;
 
@@ -86,6 +135,7 @@ export async function buildTransaction(
     outputs,
     changeOutput,
     fee: refinedFee,
+    platformFee: platformFee ?? undefined,
     builtAt: Date.now(),
   };
 

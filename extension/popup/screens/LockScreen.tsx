@@ -1,14 +1,27 @@
 import { useState, useRef, useEffect } from "react";
 import { C, mono } from "../../../src/tokens";
+import { shortAddr } from "../../../src/helpers";
 import { unlockVault } from "../../vault/vault";
 import type { UnlockedSession } from "../../vault/types";
+import { EXTENSION_POPUP_BASE_MIN_HEIGHT, EXTENSION_POPUP_BASE_WIDTH, EXTENSION_POPUP_UI_SCALE } from "../layout";
+import { popupShellBackground } from "../surfaces";
 
 interface Props {
+  autoLockMinutes: number;
+  persistSession: boolean;
   onUnlock: (session: UnlockedSession) => void;
   onReset: () => void;
+  /** When provided, shows "Welcome back" with the wallet address. */
+  walletAddress?: string | null;
 }
 
-export function LockScreen({ onUnlock, onReset }: Props) {
+export function LockScreen({
+  autoLockMinutes,
+  persistSession,
+  onUnlock,
+  onReset,
+  walletAddress,
+}: Props) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -25,7 +38,7 @@ export function LockScreen({ onUnlock, onReset }: Props) {
     setError(null);
 
     try {
-      const session = await unlockVault(password);
+      const session = await unlockVault(password, autoLockMinutes, { persistSession });
       onUnlock(session);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -39,41 +52,68 @@ export function LockScreen({ onUnlock, onReset }: Props) {
 
   return (
     <div style={{
-      width: 360, minHeight: 560, background: C.bg, display: "flex",
-      flexDirection: "column", alignItems: "center", justifyContent: "center",
-      padding: "0 28px", ...mono,
+      width: EXTENSION_POPUP_BASE_WIDTH, minHeight: EXTENSION_POPUP_BASE_MIN_HEIGHT, ...popupShellBackground(), display: "flex",
+      flexDirection: "column", alignItems: "center", justifyContent: "flex-start",
+      padding: "28px 30px 24px", ...mono, position: "relative", overflow: "hidden",
+      overflowX: "hidden", overflowY: "auto",
+      zoom: EXTENSION_POPUP_UI_SCALE,
     }}>
+      {/* Atmospheric blobs */}
+      <div style={{ position: "absolute", top: "-12%", left: "50%", transform: "translateX(-50%)", width: 360, height: 360, borderRadius: "50%", background: `radial-gradient(ellipse, ${C.accent}18 0%, transparent 70%)`, pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: "-10%", right: "-32%", width: 260, height: 260, borderRadius: "50%", background: `radial-gradient(ellipse, ${C.accent}0A 0%, transparent 72%)`, pointerEvents: "none" }} />
+      {/* Content — sits above blobs */}
+      <div style={{ position: "relative", zIndex: 1, width: "100%", display: "flex", flexDirection: "column", alignItems: "center", marginTop: 4 }}>
+
       {/* Logo */}
-      <div style={{ marginBottom: 28, textAlign: "center" }}>
+      <div style={{ marginBottom: walletAddress ? 14 : 22, textAlign: "center" }}>
         <img
-          src="../icons/icon48.png"
+          src="../icons/icon128.png"
           alt="Forge-OS"
-          style={{ width: 40, height: 40, objectFit: "contain", filter: "drop-shadow(0 0 10px rgba(57,221,182,0.6))", marginBottom: 10 }}
+          style={{
+            width: 58,
+            height: 58,
+            objectFit: "contain",
+            imageRendering: "auto",
+            filter: "drop-shadow(0 0 8px rgba(57,221,182,0.52))",
+            marginBottom: 12,
+          }}
         />
-        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.12em" }}>
+        <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: "0.12em" }}>
           <span style={{ color: C.accent }}>FORGE</span>
           <span style={{ color: C.text }}>-OS</span>
         </div>
-        <div style={{ fontSize: 8, color: C.dim, marginTop: 4, letterSpacing: "0.08em" }}>
-          WALLET LOCKED
+        <div style={{ fontSize: 9, color: C.dim, marginTop: 5, letterSpacing: "0.12em" }}>
+          {walletAddress ? "WELCOME BACK" : "WALLET LOCKED"}
         </div>
       </div>
 
+      {/* Wallet address chip — shown when returning to a known account */}
+      {walletAddress && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 6, marginBottom: 16,
+          background: `${C.accent}0A`, border: `1px solid ${C.accent}25`,
+          borderRadius: 20, padding: "6px 14px",
+        }}>
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: C.ok, flexShrink: 0 }} />
+          <span style={{ fontSize: 10, color: C.text, fontWeight: 600 }}>{shortAddr(walletAddress)}</span>
+        </div>
+      )}
+
       {/* Lock icon */}
       <div style={{
-        width: 44, height: 44, borderRadius: "50%",
+        width: 48, height: 48, borderRadius: "50%",
         background: `${C.accent}15`, border: `1px solid ${C.accent}30`,
         display: "flex", alignItems: "center", justifyContent: "center",
-        marginBottom: 24,
+        marginBottom: 18,
       }}>
-        <span style={{ fontSize: 20 }}>🔒</span>
+        <span style={{ fontSize: 22 }}>🔒</span>
       </div>
 
       {/* Unlock form */}
       <form onSubmit={handleUnlock} style={{ width: "100%" }}>
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 7, color: C.dim, letterSpacing: "0.1em", marginBottom: 6 }}>
-            PASSWORD
+            {walletAddress ? "ENTER PASSWORD TO SIGN IN" : "PASSWORD"}
           </div>
           <input
             ref={inputRef}
@@ -158,6 +198,8 @@ export function LockScreen({ onUnlock, onReset }: Props) {
           </div>
         )}
       </div>
+
+      </div>{/* end content wrapper */}
     </div>
   );
 }

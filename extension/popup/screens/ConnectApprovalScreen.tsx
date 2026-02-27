@@ -1,6 +1,12 @@
 /// <reference path="../../chrome.d.ts" />
 import { C, mono } from "../../../src/tokens";
 import { shortAddr } from "../../../src/helpers";
+import {
+  EXTENSION_CONNECT_APPROVAL_BASE_MIN_HEIGHT,
+  EXTENSION_CONNECT_APPROVAL_BASE_WIDTH,
+  EXTENSION_POPUP_UI_SCALE,
+} from "../layout";
+import { popupShellBackground } from "../surfaces";
 
 interface Props {
   address: string;
@@ -11,10 +17,20 @@ interface Props {
 }
 
 export function ConnectApprovalScreen({ address, network, origin, onApprove, onReject }: Props) {
-  const displayOrigin = origin ?? "forgeos.xyz";
+  const displayOrigin = origin ?? "forge-os.xyz";
 
   return (
-    <div style={{ width: 360, minHeight: 560, background: C.bg, display: "flex", flexDirection: "column", ...mono }}>
+    <div style={{
+      width: EXTENSION_CONNECT_APPROVAL_BASE_WIDTH,
+      minHeight: EXTENSION_CONNECT_APPROVAL_BASE_MIN_HEIGHT,
+      ...popupShellBackground(),
+      display: "flex",
+      flexDirection: "column",
+      ...mono,
+      overflowX: "hidden",
+      overflowY: "auto",
+      zoom: EXTENSION_POPUP_UI_SCALE,
+    }}>
       {/* Header */}
       <div style={{ padding: "12px 14px 10px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
         <img src="../icons/icon48.png" alt="Forge-OS" style={{ width: 22, height: 22, objectFit: "contain", filter: "drop-shadow(0 0 6px rgba(57,221,182,0.5))" }} />
@@ -38,7 +54,7 @@ export function ConnectApprovalScreen({ address, network, origin, onApprove, onR
           <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>
             Connect to Site
           </div>
-          <div style={{ fontSize: 9, color: C.dim, letterSpacing: "0.06em" }}>
+          <div style={{ fontSize: 9, color: C.dim, letterSpacing: "0.06em", wordBreak: "break-word", overflowWrap: "anywhere" }}>
             {displayOrigin}
           </div>
         </div>

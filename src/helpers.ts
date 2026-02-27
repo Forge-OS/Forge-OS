@@ -32,3 +32,24 @@ export const normalizeKaspaAddress = (address: any, allowedPrefixes: string[] = 
   const payload = lower.slice(separatorIndex + 1);
   return `${prefix}:${payload}`;
 };
+
+export const kaspaPrefixForNetwork = (network: any): string => {
+  const n = String(network || "").toLowerCase();
+  if (n === "mainnet") return "kaspa";
+  if (n.startsWith("testnet")) return "kaspatest";
+  if (n.startsWith("devnet")) return "kaspadev";
+  if (n.startsWith("simnet")) return "kaspasim";
+  return "kaspa";
+};
+
+/**
+ * Kaspa addresses are bech32-like and network-prefixed (`kaspa:`, `kaspatest:`).
+ * The payload stays the same for the same pubkey/script, so we can safely
+ * re-prefix a validated address when the user switches networks.
+ */
+export const withKaspaAddressNetwork = (address: any, network: any): string => {
+  const normalized = normalizeKaspaAddress(address);
+  const separatorIndex = normalized.indexOf(":");
+  const payload = normalized.slice(separatorIndex + 1);
+  return `${kaspaPrefixForNetwork(network)}:${payload}`;
+};

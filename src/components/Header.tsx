@@ -1,29 +1,24 @@
 // Forge.OS top navigation header.
 // Shown on the landing page (WalletGate) for unauthenticated users.
-// Sign In button checks for existing session and reconnects via extension if available.
 // After sign-in, shows a compact address chip with a disconnect dropdown.
 
 import { useState, useRef, useEffect } from "react";
 import { C, mono } from "../tokens";
 import { shortAddr } from "../helpers";
-import { loadSession, type ForgeSession } from "../auth/siwa";
 
 interface Props {
   /** Wallet session when authenticated, null when not. */
   wallet: { address: string; network: string; provider: string } | null;
-  /** Called when user clicks Sign In - attempts extension reconnect if has existing session */
+  /** Legacy prop: sign-in button is now handled in WalletGate only. */
   onSignInClick: () => void;
-  /** Called to reconnect via extension (for returning users with existing session) */
+  /** Legacy prop: sign-in button is now handled in WalletGate only. */
   onReconnect?: () => void;
   onDisconnect: () => void;
 }
 
-export function Header({ wallet, onSignInClick, onReconnect, onDisconnect }: Props) {
+export function Header({ wallet, onDisconnect }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  
-  // Check for existing session on mount
-  const [existingSession, setExistingSession] = useState<ForgeSession | null>(() => loadSession());
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -36,21 +31,6 @@ export function Header({ wallet, onSignInClick, onReconnect, onDisconnect }: Pro
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
-
-  // Handle Sign In click - if has existing session with extension, try to reconnect
-  const handleSignInClick = () => {
-    if (existingSession && (existingSession.provider === "kasware" || existingSession.provider === "kastle" || existingSession.provider === "forgeos")) {
-      // User has existing session with extension - try to reconnect via extension
-      if (onReconnect) {
-        onReconnect();
-      } else {
-        onSignInClick();
-      }
-    } else {
-      // No existing session or non-extension provider - show SignInModal
-      onSignInClick();
-    }
-  };
 
   return (
     <header
@@ -97,7 +77,7 @@ export function Header({ wallet, onSignInClick, onReconnect, onDisconnect }: Pro
         </span>
       </div>
 
-      {/* Right side: Sign In button OR address chip */}
+      {/* Right side: address chip when authenticated */}
       {wallet ? (
         <div ref={menuRef} style={{ position: "relative" }}>
           <button
@@ -210,33 +190,7 @@ export function Header({ wallet, onSignInClick, onReconnect, onDisconnect }: Pro
             </div>
           )}
         </div>
-      ) : (
-        <button
-          onClick={handleSignInClick}
-          style={{
-            background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
-            border: "none",
-            borderRadius: 6,
-            padding: "7px 18px",
-            color: "#04110E",
-            fontSize: 10,
-            fontWeight: 700,
-            cursor: "pointer",
-            letterSpacing: "0.1em",
-            ...mono,
-            boxShadow: `0 0 18px ${C.accent}40`,
-            transition: "box-shadow 0.15s, opacity 0.15s",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.boxShadow = `0 0 28px ${C.accent}70`)
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.boxShadow = `0 0 18px ${C.accent}40`)
-          }
-        >
-          SIGN IN
-        </button>
-      )}
+      ) : <div aria-hidden style={{ width: 1, height: 1 }} />}
     </header>
   );
 }

@@ -1,12 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { patchKaspaWasmForBrowser } from "./build/vite-kaspa-wasm-browser";
 
 const rawBase = process.env.VITE_BASE_PATH || "./";
 const base = rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
 
 export default defineConfig({
   base,
-  plugins: [react()],
+  plugins: [react(), patchKaspaWasmForBrowser()],
   build: {
     manifest: "manifest.json",
     sourcemap: false,

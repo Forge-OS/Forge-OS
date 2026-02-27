@@ -1,14 +1,7 @@
-import { useMemo, useState } from "react";
-import { ALLOWED_ADDRESS_PREFIXES, DEFAULT_NETWORK, DEMO_ADDRESS, NETWORK_LABEL } from "../constants";
+import { useState } from "react";
+import { NETWORK_LABEL } from "../constants";
 import { C, mono } from "../tokens";
-import { isKaspaAddress, normalizeKaspaAddress, shortAddr } from "../helpers";
-import { WalletAdapter } from "../wallet/WalletAdapter";
-import {
-  FORGEOS_CONNECTABLE_WALLETS,
-  walletClassLabel,
-} from "../wallet/walletCapabilityRegistry";
-import { formatForgeError } from "../runtime/errorTaxonomy";
-import { Badge, Btn, Card, Divider, ExtLink } from "./ui";
+import { Badge, Card, Divider } from "./ui";
 import { ForgeAtmosphere } from "./chrome/ForgeAtmosphere";
 import { WalletCreator } from "./WalletCreator";
 
@@ -65,141 +58,43 @@ const PROTOCOL_STACK = [
 ];
 
 export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: any) => void; onSignInClick?: () => void }) {
-  const [showWalletOptions, setShowWalletOptions] = useState(false);
-  const [err, setErr] = useState(null as any);
-  const [info, setInfo] = useState("");
   const [showCreator, setShowCreator] = useState(false);
-  const [kaspiumAddress, setKaspiumAddress] = useState("");
-  const [savedKaspiumAddress, setSavedKaspiumAddress] = useState("");
-  const [lastProvider, setLastProvider] = useState("");
-  const [busyProvider, setBusyProvider] = useState<string | null>(null);
-  const detected = WalletAdapter.detect();
-  const kaspiumStorageKey = useMemo(() => `forgeos.kaspium.address.${DEFAULT_NETWORK}`, []);
-  const providerStorageKey = useMemo(() => `forgeos.wallet.lastProvider.${DEFAULT_NETWORK}`, []);
-  const activeKaspiumAddress = kaspiumAddress.trim();
-  const kaspiumAddressValid = isKaspaAddress(activeKaspiumAddress, ALLOWED_ADDRESS_PREFIXES);
-  const busy = Boolean(busyProvider);
-
-  const persistKaspiumAddress = (value: string) => {
-    const normalized = value.trim();
-    if (!normalized || !isKaspaAddress(normalized, ALLOWED_ADDRESS_PREFIXES)) return;
-    setSavedKaspiumAddress(normalized);
-    if (typeof window === "undefined") return;
-    try { window.localStorage.setItem(kaspiumStorageKey, normalized); } catch {}
-  };
-
-  const persistProvider = (provider: string) => {
-    setLastProvider(provider);
-    if (typeof window === "undefined") return;
-    try { window.localStorage.setItem(providerStorageKey, provider); } catch {}
-  };
-
-  const resolveKaspiumAddress = async () => {
-    const active = (kaspiumAddress.trim() || savedKaspiumAddress.trim()).trim();
-    if (active && isKaspaAddress(active, ALLOWED_ADDRESS_PREFIXES)) {
-      return normalizeKaspaAddress(active, ALLOWED_ADDRESS_PREFIXES);
-    }
-    if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
-      try {
-        const clipboardRaw = await navigator.clipboard.readText();
-        const candidate = String(clipboardRaw || "").trim().split(/\s+/)[0] || "";
-        if (candidate && isKaspaAddress(candidate, ALLOWED_ADDRESS_PREFIXES)) {
-          const normalized = normalizeKaspaAddress(candidate, ALLOWED_ADDRESS_PREFIXES);
-          setKaspiumAddress(normalized);
-          persistKaspiumAddress(normalized);
-          return normalized;
-        }
-      } catch {}
-    }
-    const raw = window.prompt(`Paste your ${NETWORK_LABEL} Kaspium address (${ALLOWED_ADDRESS_PREFIXES.join(", ")}).`) || "";
-    const normalized = normalizeKaspaAddress(raw, ALLOWED_ADDRESS_PREFIXES);
-    setKaspiumAddress(normalized);
-    persistKaspiumAddress(normalized);
-    return normalized;
-  };
-
-  const resolveManualBridgeAddress = async (walletName: string) => {
-    const raw = window.prompt(`Paste your ${NETWORK_LABEL} ${walletName} receive address (${ALLOWED_ADDRESS_PREFIXES.join(", ")}).`) || "";
-    return normalizeKaspaAddress(raw, ALLOWED_ADDRESS_PREFIXES);
-  };
-
-  const connect = async (provider: string) => {
-    setBusyProvider(provider);
-    setErr(null);
-    setInfo("");
-    try {
-      let session: any;
-      if (provider === "kasware") {
-        session = await WalletAdapter.connectKasware();
-        setInfo("Kasware session ready. Extension signing is armed.");
-      } else if (provider === "kastle") {
-        session = await WalletAdapter.connectKastle();
-        setInfo("Kastle session ready. Extension signing is armed.");
-      } else if (provider === "tangem" || provider === "onekey") {
-        const resolvedAddress = await resolveManualBridgeAddress(provider === "tangem" ? "Tangem" : "OneKey");
-        session = await WalletAdapter.connectHardwareBridge(provider as "tangem" | "onekey", resolvedAddress);
-        setInfo(`${provider === "tangem" ? "Tangem" : "OneKey"} bridge session ready for ${shortAddr(session.address)}.`);
-      } else if (provider === "kaspium") {
-        const resolvedAddress = await resolveKaspiumAddress();
-        session = WalletAdapter.connectKaspium(resolvedAddress);
-        persistKaspiumAddress(session.address);
-        setInfo(`Kaspium session ready for ${shortAddr(session.address)}.`);
-      } else {
-        session = { address: DEMO_ADDRESS, network: DEFAULT_NETWORK, provider: "demo" };
-        setInfo("Demo session ready.");
-      }
-      persistProvider(provider);
-      onConnect(session);
-    } catch (e: any) {
-      setErr(formatForgeError(e) || e?.message || "Wallet connection failed.");
-    }
-    setBusyProvider(null);
-  };
-
-  const wallets = FORGEOS_CONNECTABLE_WALLETS.filter(w => w.id === "demo").map((w) => {
-    return { ...w, statusText: "No blockchain broadcast", statusColor: C.dim, cta: "Enter Demo Mode" };
-  });
-
-  const walletSections = useMemo(() => {
-    const ordered = Array.isArray(wallets) ? wallets : [];
-    const sandbox = ordered.filter((w) => String(w.id) === "demo");
-    return [
-      { key: "sandbox", title: "Sandbox", subtitle: "UI validation — no on-chain broadcast.", items: sandbox },
-    ].filter((section) => section.items.length > 0);
-  }, [wallets]);
 
   return (
     <div className="forge-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", minHeight: "100vh", padding: "clamp(8px, 2vw, 12px)" }}>
-<ForgeAtmosphere />
-      <div className="forge-content forge-gate-responsive" style={{ width: "100%", maxWidth: 1380, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(300px,480px)", gap: "clamp(16px, 3vw, 32px)", alignItems: "center" }}>
+      <ForgeAtmosphere />
 
-        {/* ── HERO COLUMN ── */}
-        <section style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+      {/* ── FULL-WIDTH CENTERED HERO ── */}
+      <div style={{ width: "100%", maxWidth: 860, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "clamp(24px,4vw,48px) clamp(8px,2vw,16px) clamp(20px,3vw,36px)" }}>
+        <div style={{ fontSize: 9, color: C.accent, fontWeight: 700, ...mono, letterSpacing: "0.2em" }}>
+          FORGE-OS // KASPA-NATIVE QUANT STACK
+        </div>
+        <h1 style={{ font: `700 clamp(26px,4.5vw,52px)/1.1 'IBM Plex Mono',monospace`, letterSpacing: "0.03em", margin: 0, color: C.text, textWrap: "balance" as any }}>
+          <span style={{ color: C.accent, textShadow: "0 0 30px rgba(57,221,182,0.55)" }}>KAS / USDC</span>
+          <span style={{ color: C.text, fontWeight: 800 }}> AI TRADING</span>
+          <br />
+          <span style={{ color: C.dim, fontWeight: 500, fontSize: "0.65em", letterSpacing: "0.06em" }}>⚡ BLOCKDAG SPEED</span>
+        </h1>
+        <p style={{ font: `500 13px/1.55 'Space Grotesk','Segoe UI',sans-serif`, color: "#9db0c6", maxWidth: "58ch", margin: 0 }}>
+          Full-stack DeFi for Kaspa. Agents accumulate KAS today — and flip to active profit trading the moment stablecoins, KRC-20, and Kaspa 0x swaps go live.
+        </p>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+          <Badge text={`${NETWORK_LABEL}`} color={C.ok} dot />
+          <Badge text="KRC-20 READY" color={C.purple} dot />
+          <Badge text="NON-CUSTODIAL" color={C.warn} dot />
+          <Badge text="DAG-SPEED EXECUTION" color={C.accent} dot />
+        </div>
+      </div>
 
-          {/* Kicker + title */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-            <div style={{ fontSize: 9, color: C.accent, fontWeight: 700, ...mono, letterSpacing: "0.2em", marginBottom: 4 }}>
-              FORGE-OS // KASPA-NATIVE QUANT STACK
-            </div>
-            <h1 style={{ font: `700 clamp(20px,3.5vw,40px)/1.1 'IBM Plex Mono',monospace`, letterSpacing: "0.03em", margin: "0 0 4px", color: C.text, textWrap: "balance" as any }}>
-              <span style={{ color: C.accent, textShadow: "0 0 25px rgba(57,221,182,0.5)" }}>KAS / USDC</span><br />
-              <span style={{ color: C.text, fontWeight: 800 }}>AI TRADING</span><br />
-              <span style={{ color: C.dim, fontWeight: 500, fontSize: "0.85em" }}>⚡ BLOCKDAG SPEED</span>
-            </h1>
-            <p style={{ font: `500 12px/1.4 'Space Grotesk','Segoe UI',sans-serif`, color: "#9db0c6", maxWidth: "48ch", margin: "0 0 6px" }}>
-              Full-stack DeFi for Kaspa. Agents accumulate KAS today — and flip to active profit trading the moment stablecoins, KRC-20, and Kaspa 0x swaps go live.
-            </p>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-              <Badge text={`${NETWORK_LABEL}`} color={C.ok} dot />
-              <Badge text="KRC-20 READY" color={C.purple} dot />
-              <Badge text="NON-CUSTODIAL" color={C.warn} dot />
-              <Badge text="DAG-SPEED EXECUTION" color={C.accent} dot />
-            </div>
-          </div>
+      {/* ── MAIN CONTENT GRID ── */}
+      <div className="forge-content forge-gate-responsive" style={{ width: "100%", maxWidth: 1380, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(300px,480px)", gap: "clamp(16px, 3vw, 32px)", alignItems: "flex-start" }}>
+
+        {/* ── INFO COLUMN ── */}
+        <section style={{ display: "flex", flexDirection: "column", gap: 6, justifySelf: "center", width: "100%", maxWidth: 910, textAlign: "center" }}>
 
           {/* Protocol stack grid */}
-          <div>
-            <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.16em", marginBottom: 6 }}>PROTOCOL CAPABILITIES</div>
+          <div style={{ width: "100%" }}>
+            <div style={{ fontSize: 9, color: C.dim, ...mono, letterSpacing: "0.16em", marginBottom: 6, textAlign: "center" }}>PROTOCOL CAPABILITIES</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 4 }}>
               {PROTOCOL_STACK.map((item) => (
                 <div key={item.title}
@@ -224,7 +119,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           </div>
 
           {/* Architecture strip */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, width: "100%" }}>
             {[
               ["EXECUTION", "Wallet-native signing + queue lifecycle management"],
               ["TRUTH", "Receipt-aware P&L attribution + consistency checks"],
@@ -238,7 +133,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           </div>
 
           {/* Key numbers */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, width: "100%" }}>
             {[
               { v: "BlockDAG", l: "Settlement speed" },
               { v: "Non-Custodial", l: "Keys stay in wallet" },
@@ -252,7 +147,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           </div>
 
           {/* Social links */}
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
             {[
               { href: "https://x.com/ForgeOSxyz", icon: "𝕏", label: "@ForgeOSxyz", c: C.text },
               { href: "https://github.com/Forge-OS", icon: "⌘", label: "GitHub", c: C.dim },
@@ -273,15 +168,8 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
         </section>
 
         {/* ── CONNECT COLUMN ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-
-          {/* Branding lockup */}
-          <div style={{ textAlign: "center", marginBottom: 4 }}>
-            <div style={{ fontSize: "clamp(18px,3vw,24px)", fontWeight: 700, ...mono, letterSpacing: "0.12em", lineHeight: 1.2 }}>
-              <span style={{ color: C.accent }}>FORGE</span><span style={{ color: C.text }}>-OS</span>
-            </div>
-            <div style={{ fontSize: 9, color: C.dim, letterSpacing: "0.1em", ...mono }}>AI-NATIVE FINANCIAL OPERATING SYSTEM · POWERED BY KASPA</div>
-          </div>
+        <div className="forge-connect-column" style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: "clamp(-35px,-3vw,-18px)" }}>
+          <div aria-hidden style={{ height: "clamp(34px, 5vw, 52px)" }} />
 
           {/* Connect card */}
           <Card p={16} style={{ border: `1px solid rgba(57,221,182,0.14)` }}>
@@ -296,13 +184,12 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
             {/* Primary CTA — Sign In / Connect opens extension popup + wallet list */}
             <button
               onClick={onSignInClick}
-              disabled={busy}
               style={{
                 width: "100%",
                 background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
                 border: "none",
                 borderRadius: 8,
-                cursor: busy ? "not-allowed" : "pointer",
+                cursor: "pointer",
                 color: "#04110E",
                 fontSize: 12,
                 ...mono,
@@ -311,10 +198,9 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
                 padding: "12px 0",
                 boxShadow: "0 4px 20px rgba(57,221,182,0.28)",
                 marginBottom: 8,
-                opacity: busy ? 0.6 : 1,
-                transition: "opacity 0.15s, box-shadow 0.15s",
+                transition: "box-shadow 0.15s",
               }}
-              onMouseEnter={(e) => { if (!busy) (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 28px rgba(57,221,182,0.44)"; }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 28px rgba(57,221,182,0.44)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 20px rgba(57,221,182,0.28)"; }}
             >
               CONNECT WALLET →
@@ -348,8 +234,6 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
               </span>
             </button>
 
-            {info && <div style={{ marginTop: 10, padding: "8px 12px", background: `${C.ok}12`, border: `1px solid ${C.ok}44`, borderRadius: 6, fontSize: 10, color: C.ok, ...mono }}>{info}</div>}
-            {err && <div style={{ marginTop: 10, padding: "8px 12px", background: C.dLow, border: `1px solid ${C.danger}40`, borderRadius: 6, fontSize: 10, color: C.danger, ...mono }}>{err}</div>}
 
             <Divider m={12} />
             <div style={{ fontSize: 8, color: C.dim, ...mono, lineHeight: 1.5 }}>
@@ -377,6 +261,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
       <style>{`
         @media (max-width: 1080px) {
           .forge-gate-responsive { grid-template-columns: 1fr !important; max-width: 720px; }
+          .forge-connect-column { margin-top: 10px !important; }
         }
       `}</style>
 

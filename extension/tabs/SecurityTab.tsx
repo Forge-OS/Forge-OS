@@ -2,21 +2,51 @@
 // The mnemonic is NEVER passed as a prop; it is read from the in-memory
 // session (unlockVault) only when the user explicitly authenticates here.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { C, mono } from "../../src/tokens";
 import { shortAddr } from "../../src/helpers";
-import { unlockVault, changePassword, resetWallet, getSession } from "../vault/vault";
+import { unlockVault, changePassword, resetWallet } from "../vault/vault";
+import {
+  getCustomKaspaRpc,
+  getKaspaRpcProviderPreset,
+  setCustomKaspaRpc,
+  setKaspaRpcProviderPreset,
+  type KaspaRpcProviderPreset,
+} from "../shared/storage";
+import {
+  insetCard,
+  monoInput,
+  outlineButton,
+  popupTabStack,
+  primaryButton,
+  sectionCard,
+  sectionKicker,
+  sectionTitle,
+} from "../popup/surfaces";
 
 interface Props {
   address: string | null;
   network: string;
   isManagedWallet: boolean;
+  autoLockMinutes: number;
+  persistUnlockSessionEnabled: boolean;
+  onAutoLockMinutesChange: (minutes: number) => Promise<void> | void;
+  onPersistUnlockSessionChange: (enabled: boolean) => Promise<void> | void;
   onLock: () => void;
 }
 
 type Panel = "none" | "reveal" | "change_pw" | "reset";
 
-export function SecurityTab({ address, network, isManagedWallet, onLock }: Props) {
+export function SecurityTab({
+  address,
+  network,
+  isManagedWallet,
+  autoLockMinutes,
+  persistUnlockSessionEnabled,
+  onAutoLockMinutesChange,
+  onPersistUnlockSessionChange,
+  onLock,
+}: Props) {
   const [panel, setPanel] = useState<Panel>("none");
   const [revealWords, setRevealWords] = useState<string[]>([]);
 
@@ -35,8 +65,53 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
 
   // Reset state
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [sessionPrefsLoading, setSessionPrefsLoading] = useState(false);
+  const [rpcPreset, setRpcPreset] = useState<KaspaRpcProviderPreset>("official");
+  const [customRpcInput, setCustomRpcInput] = useState("");
+  const [customRpcLoading, setCustomRpcLoading] = useState(false);
+  const [customRpcError, setCustomRpcError] = useState<string | null>(null);
+  const [customRpcSaved, setCustomRpcSaved] = useState(false);
+
+  const rpcPresetLabels: Record<KaspaRpcProviderPreset, string> = {
+    official: "OFFICIAL",
+    igra: "IGRA",
+    kasplex: "KASPLEX",
+    custom: "CUSTOM",
+  };
 
   const provider = isManagedWallet ? "managed" : address ? "watch-only" : "none";
+  const autoLockOptions: Array<{ label: string; value: number }> = [
+    { label: "1m", value: 1 },
+    { label: "15m", value: 15 },
+    { label: "1h", value: 60 },
+    { label: "4h", value: 240 },
+    { label: "Never", value: -1 },
+  ];
+
+  useEffect(() => {
+    let active = true;
+    setCustomRpcLoading(true);
+    setCustomRpcError(null);
+    setCustomRpcSaved(false);
+
+    Promise.all([getCustomKaspaRpc(network), getKaspaRpcProviderPreset(network)])
+      .then(([value, preset]) => {
+        if (!active) return;
+        setCustomRpcInput(value ?? "");
+        setRpcPreset(preset);
+      })
+      .catch(() => {
+        if (!active) return;
+        setCustomRpcError("Failed to load RPC settings.");
+      })
+      .finally(() => {
+        if (active) setCustomRpcLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [network]);
 
   // ── Reveal seed phrase ───────────────────────────────────────────────────────
   const handleReveal = async (e: React.FormEvent) => {
@@ -45,7 +120,9 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
     setRevealLoading(true);
     try {
       // Re-authenticate with password to get fresh session + mnemonic
-      const session = await unlockVault(revealPw);
+      const session = await unlockVault(revealPw, autoLockMinutes, {
+        persistSession: persistUnlockSessionEnabled,
+      });
       setRevealWords(session.mnemonic.split(" "));
       setRevealPw("");
     } catch (err) {
@@ -95,10 +172,7 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
 
   // ── Input style helper ───────────────────────────────────────────────────────
   const inputStyle = (hasError = false) => ({
-    width: "100%", boxSizing: "border-box" as const,
-    background: "rgba(8,13,20,0.7)", border: `1px solid ${hasError ? C.danger : C.border}`,
-    borderRadius: 6, padding: "7px 10px", color: C.text, fontSize: 9,
-    ...mono, outline: "none",
+    ...monoInput(hasError),
   });
 
   const closePanel = () => {
@@ -110,12 +184,84 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
     setResetConfirm(false);
   };
 
+  const applyAutoLockMinutes = async (minutes: number) => {
+    setSessionPrefsLoading(true);
+    try {
+      await onAutoLockMinutesChange(minutes);
+    } finally {
+      setSessionPrefsLoading(false);
+    }
+  };
+
+  const togglePersistUnlockSession = async () => {
+    setSessionPrefsLoading(true);
+    try {
+      await onPersistUnlockSessionChange(!persistUnlockSessionEnabled);
+    } finally {
+      setSessionPrefsLoading(false);
+    }
+  };
+
+  const applyRpcPreset = async (preset: KaspaRpcProviderPreset) => {
+    setCustomRpcLoading(true);
+    setCustomRpcError(null);
+    setCustomRpcSaved(false);
+    try {
+      await setKaspaRpcProviderPreset(network, preset);
+      setRpcPreset(preset);
+      setCustomRpcSaved(true);
+    } catch {
+      setCustomRpcError("Failed to save RPC provider preset.");
+    } finally {
+      setCustomRpcLoading(false);
+    }
+  };
+
+  const saveCustomRpc = async () => {
+    setCustomRpcLoading(true);
+    setCustomRpcError(null);
+    setCustomRpcSaved(false);
+    try {
+      await setCustomKaspaRpc(network, customRpcInput.trim() || null);
+      await setKaspaRpcProviderPreset(network, "custom");
+      setRpcPreset("custom");
+      setCustomRpcSaved(true);
+      if (!customRpcInput.trim()) setCustomRpcInput("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "INVALID_RPC_ENDPOINT") {
+        setCustomRpcError("Invalid endpoint URL. Use http(s)://...");
+      } else {
+        setCustomRpcError("Failed to save custom RPC endpoint.");
+      }
+    } finally {
+      setCustomRpcLoading(false);
+    }
+  };
+
+  const clearCustomRpc = async () => {
+    setCustomRpcLoading(true);
+    setCustomRpcError(null);
+    setCustomRpcSaved(false);
+    try {
+      await setCustomKaspaRpc(network, null);
+      await setKaspaRpcProviderPreset(network, "official");
+      setRpcPreset("official");
+      setCustomRpcInput("");
+      setCustomRpcSaved(true);
+    } catch {
+      setCustomRpcError("Failed to clear custom RPC endpoint.");
+    } finally {
+      setCustomRpcLoading(false);
+    }
+  };
+
   return (
-    <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={popupTabStack}>
 
       {/* Connection status */}
-      <div style={{ background: "rgba(8,13,20,0.6)", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
-        <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.12em", marginBottom: 8 }}>CONNECTION STATUS</div>
+      <div style={sectionCard("default")}>
+        <div style={{ ...sectionKicker, marginBottom: 8 }}>CONNECTION STATUS</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div>
             <div style={{ fontSize: 7, color: C.dim, marginBottom: 3 }}>PROVIDER</div>
@@ -136,11 +282,133 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
           {address && (
             <div style={{ gridColumn: "1 / -1" }}>
               <div style={{ fontSize: 7, color: C.dim, marginBottom: 3 }}>ADDRESS</div>
-              <div style={{ fontSize: 8, color: C.text }}>{shortAddr(address)}</div>
+              <div style={{ ...insetCard(), fontSize: 8, color: C.text, padding: "7px 9px" }}>{shortAddr(address)}</div>
             </div>
           )}
         </div>
       </div>
+
+      <div style={sectionCard("default")}>
+        <div style={{ ...sectionKicker, marginBottom: 8 }}>KASPA RPC ENDPOINT</div>
+        <div style={{ fontSize: 7, color: C.dim, lineHeight: 1.5, marginBottom: 7 }}>
+          Active network: <span style={{ color: C.text, fontWeight: 700 }}>{network.toUpperCase()}</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          {(Object.keys(rpcPresetLabels) as KaspaRpcProviderPreset[]).map((preset) => {
+            const active = rpcPreset === preset;
+            return (
+              <button
+                key={preset}
+                onClick={() => { void applyRpcPreset(preset); }}
+                disabled={customRpcLoading}
+                style={{
+                  ...outlineButton(active ? C.accent : C.dim, true),
+                  padding: "6px 8px",
+                  fontSize: 8,
+                  color: active ? C.accent : C.dim,
+                  opacity: customRpcLoading ? 0.7 : 1,
+                }}
+              >
+                {rpcPresetLabels[preset]}
+              </button>
+            );
+          })}
+        </div>
+        <input
+          value={customRpcInput}
+          onChange={(e) => {
+            setCustomRpcInput(e.target.value);
+            setCustomRpcSaved(false);
+            setCustomRpcError(null);
+          }}
+          placeholder={network === "mainnet" ? "https://your-mainnet-kaspa-rpc.example" : "https://your-kaspa-rpc.example"}
+          disabled={customRpcLoading || rpcPreset !== "custom"}
+          style={{ ...inputStyle(Boolean(customRpcError)), marginBottom: 7 }}
+        />
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            onClick={() => { void saveCustomRpc(); }}
+            disabled={customRpcLoading || rpcPreset !== "custom"}
+            style={{
+              ...outlineButton(C.accent, true),
+              flex: 1,
+              padding: "7px 8px",
+              color: C.accent,
+              opacity: customRpcLoading ? 0.7 : 1,
+            }}
+          >
+            {customRpcLoading ? "SAVING…" : "SAVE RPC"}
+          </button>
+          <button
+            onClick={() => { void clearCustomRpc(); }}
+            disabled={customRpcLoading}
+            style={{
+              ...outlineButton(C.dim, true),
+              flex: 1,
+              padding: "7px 8px",
+              color: C.dim,
+              opacity: customRpcLoading ? 0.7 : 1,
+            }}
+          >
+            CLEAR
+          </button>
+        </div>
+        {customRpcError && (
+          <div style={{ fontSize: 7, color: C.danger, marginTop: 6 }}>{customRpcError}</div>
+        )}
+        {!customRpcError && customRpcSaved && (
+          <div style={{ fontSize: 7, color: C.ok, marginTop: 6 }}>Saved RPC settings for this network.</div>
+        )}
+        <div style={{ fontSize: 7, color: C.dim, lineHeight: 1.5, marginTop: 6 }}>
+          Presets are stored per network. Igra/Kasplex pools read from env (`VITE_KASPA_IGRA_*` / `VITE_KASPA_KASPLEX_*`) and fall back to Official if unset.
+        </div>
+      </div>
+
+      {isManagedWallet && (
+        <div style={sectionCard("default")}>
+          <div style={{ ...sectionKicker, marginBottom: 8 }}>SESSION SETTINGS</div>
+
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 7, color: C.dim, marginBottom: 5, letterSpacing: "0.08em" }}>AUTO-LOCK</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {autoLockOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  disabled={sessionPrefsLoading}
+                  onClick={() => { void applyAutoLockMinutes(opt.value); }}
+                  style={{
+                    ...outlineButton(autoLockMinutes === opt.value ? C.accent : C.dim, true),
+                    padding: "6px 8px",
+                    fontSize: 8,
+                    color: autoLockMinutes === opt.value ? C.accent : C.dim,
+                    opacity: sessionPrefsLoading ? 0.7 : 1,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={() => { void togglePersistUnlockSession(); }}
+            disabled={sessionPrefsLoading}
+            style={{
+              ...outlineButton(persistUnlockSessionEnabled ? C.ok : C.dim, true),
+              width: "100%",
+              padding: "8px 10px",
+              color: persistUnlockSessionEnabled ? C.ok : C.dim,
+              textAlign: "left",
+              opacity: sessionPrefsLoading ? 0.7 : 1,
+            }}
+          >
+            {persistUnlockSessionEnabled ? "✓ KEEP UNLOCKED WHEN POPUP CLOSES" : "KEEP UNLOCKED WHEN POPUP CLOSES"}
+          </button>
+          <div style={{ fontSize: 7, color: C.dim, lineHeight: 1.5, marginTop: 6 }}>
+            Stores an unlocked session only in browser session memory; lock manually on shared devices.
+          </div>
+        </div>
+      )}
 
       {/* Managed wallet actions */}
       {isManagedWallet && (
@@ -162,9 +430,9 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
 
           {/* ── REVEAL PHRASE PANEL ───────────────────────────────────────── */}
           {panel === "reveal" && (
-            <div style={{ background: `${C.warn}0A`, border: `1px solid ${C.warn}30`, borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ ...sectionCard("warn") }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <span style={{ fontSize: 9, color: C.warn, fontWeight: 700, letterSpacing: "0.08em" }}>SEED PHRASE</span>
+                <span style={{ ...sectionTitle, color: C.warn }}>SEED PHRASE</span>
                 <button onClick={handleHidePhrase} style={{ background: "none", border: "none", color: C.dim, fontSize: 8, cursor: "pointer", ...mono }}>✕ close</button>
               </div>
 
@@ -187,17 +455,17 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
                     type="submit"
                     disabled={!revealPw || revealLoading}
                     style={{
-                      width: "100%", padding: "7px 0",
-                      background: revealPw && !revealLoading ? `${C.warn}25` : "rgba(33,48,67,0.5)",
-                      border: `1px solid ${revealPw && !revealLoading ? C.warn : C.border}`,
-                      borderRadius: 6, color: revealPw && !revealLoading ? C.warn : C.dim,
-                      fontSize: 8, fontWeight: 700, cursor: revealPw && !revealLoading ? "pointer" : "not-allowed", ...mono,
+                      ...outlineButton(revealPw && !revealLoading ? C.warn : C.dim, true),
+                      width: "100%",
+                      padding: "7px 0",
+                      color: revealPw && !revealLoading ? C.warn : C.dim,
+                      cursor: revealPw && !revealLoading ? "pointer" : "not-allowed",
                     }}
                   >{revealLoading ? "AUTHENTICATING…" : "SHOW SEED PHRASE"}</button>
                 </form>
               ) : (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 8 }}>
+                  <div style={{ ...insetCard(), display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 8 }}>
                     {revealWords.map((word, i) => (
                       <div key={i} style={{
                         background: "rgba(5,7,10,0.9)", border: `1px solid ${C.border}`,
@@ -219,9 +487,9 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
 
           {/* ── CHANGE PASSWORD PANEL ─────────────────────────────────────── */}
           {panel === "change_pw" && (
-            <div style={{ background: "rgba(8,13,20,0.6)", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+            <div style={sectionCard("default")}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <span style={{ fontSize: 9, color: C.text, fontWeight: 700, letterSpacing: "0.08em" }}>CHANGE PASSWORD</span>
+                <span style={sectionTitle}>CHANGE PASSWORD</span>
                 <button onClick={closePanel} style={{ background: "none", border: "none", color: C.dim, fontSize: 8, cursor: "pointer", ...mono }}>✕ close</button>
               </div>
 
@@ -242,13 +510,9 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
                     type="submit"
                     disabled={!oldPw || !newPw || !confirmPw || changePwLoading}
                     style={{
-                      padding: "8px 0", background: oldPw && newPw && confirmPw && !changePwLoading
-                        ? `linear-gradient(90deg, ${C.accent}, #7BE9CF)` : `${C.accent}30`,
-                      border: "none", borderRadius: 6,
-                      color: oldPw && newPw && confirmPw && !changePwLoading ? "#04110E" : C.dim,
-                      fontSize: 9, fontWeight: 700,
+                      ...primaryButton(oldPw && newPw && confirmPw && !changePwLoading),
+                      padding: "8px 0",
                       cursor: oldPw && newPw && confirmPw && !changePwLoading ? "pointer" : "not-allowed",
-                      ...mono, letterSpacing: "0.08em",
                     }}
                   >{changePwLoading ? "RE-ENCRYPTING…" : "UPDATE PASSWORD"}</button>
                 </form>
@@ -258,9 +522,9 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
 
           {/* ── RESET WALLET PANEL ────────────────────────────────────────── */}
           {panel === "reset" && (
-            <div style={{ background: C.dLow, border: `1px solid ${C.danger}40`, borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ ...sectionCard("danger"), backgroundColor: C.dLow }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <span style={{ fontSize: 9, color: C.danger, fontWeight: 700, letterSpacing: "0.08em" }}>⚠ RESET WALLET</span>
+                <span style={{ ...sectionTitle, color: C.danger }}>⚠ RESET WALLET</span>
                 <button onClick={closePanel} style={{ background: "none", border: "none", color: C.dim, fontSize: 8, cursor: "pointer", ...mono }}>✕ cancel</button>
               </div>
               <div style={{ fontSize: 7, color: C.dim, lineHeight: 1.5, marginBottom: 10 }}>
@@ -271,11 +535,11 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
               <button
                 onClick={handleReset}
                 style={{
+                  ...outlineButton(C.danger, true),
                   width: "100%", padding: "8px 0",
-                  background: resetConfirm ? C.danger : C.dLow,
+                  background: resetConfirm ? C.danger : "rgba(49,21,32,0.65)",
                   border: `1px solid ${C.danger}${resetConfirm ? "90" : "50"}`,
-                  borderRadius: 6, color: resetConfirm ? "#fff" : C.danger,
-                  fontSize: 9, fontWeight: 700, cursor: "pointer", ...mono, letterSpacing: "0.08em",
+                  color: resetConfirm ? "#fff" : C.danger,
                 }}
               >{resetConfirm ? "⚠ CONFIRM — PERMANENTLY DELETE VAULT" : "RESET WALLET"}</button>
               {resetConfirm && (
@@ -289,8 +553,8 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
       )}
 
       {/* Security notes */}
-      <div style={{ background: "rgba(8,13,20,0.4)", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px" }}>
-        <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.1em", marginBottom: 6 }}>SECURITY NOTES</div>
+      <div style={{ ...insetCard(), padding: "10px 12px" }}>
+        <div style={{ ...sectionKicker, marginBottom: 6 }}>SECURITY NOTES</div>
         {[
           "Seed phrase encrypted with AES-256-GCM before storage.",
           "Password derived with PBKDF2-SHA256 (600,000 iterations).",
@@ -309,9 +573,8 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
         <button
           onClick={onLock}
           style={{
-            padding: "8px 0", background: "rgba(8,13,20,0.5)",
-            border: `1px solid ${C.border}`, borderRadius: 8,
-            color: C.dim, fontSize: 9, cursor: "pointer", ...mono, letterSpacing: "0.08em",
+            ...outlineButton(C.dim, true),
+            padding: "8px 0",
           }}
         >🔒 LOCK WALLET</button>
       )}
@@ -322,10 +585,9 @@ export function SecurityTab({ address, network, isManagedWallet, onLock }: Props
 // ── Style helpers ─────────────────────────────────────────────────────────────
 function actionBtn(color: string): React.CSSProperties {
   return {
-    padding: "9px 12px", background: "rgba(8,13,20,0.6)",
-    border: `1px solid ${color}35`, borderRadius: 8,
-    color, fontSize: 9, fontWeight: 700, cursor: "pointer",
+    ...outlineButton(color, true),
+    padding: "10px 12px",
+    color,
     textAlign: "left" as const, letterSpacing: "0.08em",
-    fontFamily: "'IBM Plex Mono','SFMono-Regular',Menlo,Monaco,monospace",
   };
 }

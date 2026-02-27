@@ -50,6 +50,8 @@ export interface PendingTx {
 
   // Fee
   fee: bigint;
+  /** Optional platform fee routed to treasury address (sompi). Undefined when treasury is unconfigured. */
+  platformFee?: bigint;
 
   // Timing
   builtAt: number;        // Unix ms

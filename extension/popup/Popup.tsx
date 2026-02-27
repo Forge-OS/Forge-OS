@@ -1,10 +1,30 @@
 import { useEffect, useState, useCallback } from "react";
 import { C, mono } from "../../src/tokens";
-import { shortAddr, fmt } from "../../src/helpers";
+import { shortAddr, withKaspaAddressNetwork } from "../../src/helpers";
 import { fetchKasBalance, fetchKasUsdPrice } from "../shared/api";
-import { getWalletMeta, getNetwork, getAutoLockMinutes } from "../shared/storage";
-import { vaultExists, unlockVault, lockWallet, getSession, extendSession } from "../vault/vault";
+import {
+  getWalletMeta,
+  getNetwork,
+  setNetwork as saveNetwork,
+  getAutoLockMinutes,
+  setAutoLockMinutes as saveAutoLockMinutes,
+  getPersistUnlockSession,
+  setPersistUnlockSession,
+  getHidePortfolioBalances,
+  setHidePortfolioBalances,
+  setWalletMeta,
+} from "../shared/storage";
+import {
+  vaultExists,
+  lockWallet,
+  getSession,
+  extendSession,
+  restoreSessionFromCache,
+  setSessionPersistence,
+} from "../vault/vault";
+import { fetchDagInfo, getKaspaEndpointHealth, NETWORK_BPS } from "../network/kaspaClient";
 import type { UnlockedSession } from "../vault/types";
+import { signMessage as signManagedMessage } from "../../src/wallet/KaspaWalletManager";
 import { WalletTab } from "../tabs/WalletTab";
 import { AgentsTab } from "../tabs/AgentsTab";
 import { SecurityTab } from "../tabs/SecurityTab";
@@ -12,8 +32,15 @@ import { SwapTab } from "../tabs/SwapTab";
 import { LockScreen } from "./screens/LockScreen";
 import { FirstRunScreen } from "./screens/FirstRunScreen";
 import { ConnectApprovalScreen } from "./screens/ConnectApprovalScreen";
+import { SignApprovalScreen } from "./screens/SignApprovalScreen";
+import { EXTENSION_POPUP_BASE_MIN_HEIGHT, EXTENSION_POPUP_BASE_WIDTH, EXTENSION_POPUP_UI_SCALE } from "./layout";
+import { outlineButton, popupShellBackground } from "./surfaces";
+import {
+  formatFiatFromUsd,
+  type DisplayCurrency,
+} from "../shared/fiat";
 
-type Tab = "wallet" | "agents" | "swap" | "security";
+type Tab = "wallet" | "swap" | "agents" | "security";
 
 // ── Screen state ─────────────────────────────────────────────────────────────
 type Screen =
@@ -23,6 +50,20 @@ type Screen =
   | { type: "unlocked" };
 
 const PENDING_CONNECT_KEY = "forgeos.connect.pending";
+const PENDING_SIGN_KEY = "forgeos.sign.pending";
+
+type PendingConnectRequest = {
+  requestId: string;
+  tabId: number;
+  origin?: string;
+};
+
+type PendingSignRequest = {
+  requestId: string;
+  tabId: number;
+  origin?: string;
+  message: string;
+};
 
 export function Popup() {
   const [screen, setScreen] = useState<Screen>({ type: "loading" });
@@ -32,53 +73,110 @@ export function Popup() {
   const [usdPrice, setUsdPrice] = useState(0);
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<Tab>("wallet");
+  const [walletMode, setWalletMode] = useState<"send" | "receive" | undefined>();
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
-  const [pendingConnect, setPendingConnect] = useState<{ requestId: string; tabId: number } | null>(null);
+  const [persistUnlockSessionEnabled, setPersistUnlockSessionEnabled] = useState(false);
+  const [hidePortfolioBalances, setHidePortfolioBalancesState] = useState(false);
+  const [pendingConnect, setPendingConnect] = useState<PendingConnectRequest | null>(null);
+  const [pendingSign, setPendingSign] = useState<PendingSignRequest | null>(null);
+  const [signingSiteRequest, setSigningSiteRequest] = useState(false);
+  const [siteSignError, setSiteSignError] = useState<string | null>(null);
+  const [lockedAddress, setLockedAddress] = useState<string | null>(null);
+  const [dagScore, setDagScore] = useState<string | null>(null);
+  const [activeRpcEndpoint, setActiveRpcEndpoint] = useState<string | null>(null);
+  const [balanceUpdatedAt, setBalanceUpdatedAt] = useState<number | null>(null);
+  const [priceUpdatedAt, setPriceUpdatedAt] = useState<number | null>(null);
+  const [dagUpdatedAt, setDagUpdatedAt] = useState<number | null>(null);
+  const [feedStatusMessage, setFeedStatusMessage] = useState<string | null>(null);
+
+  const NETWORKS = ["mainnet", "testnet-10", "testnet-11"] as const;
+  const NETWORK_LABELS: Record<string, string> = { mainnet: "MAINNET", "testnet-10": "TN10", "testnet-11": "TN11" };
+  const BALANCE_FEED_STALE_MS = 45_000;
+  const PRICE_FEED_STALE_MS = 45_000;
+  const DAG_FEED_STALE_MS = 60_000;
 
   // ── Initialise ──────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
-      const [exists, net, lockMins] = await Promise.all([
-        vaultExists(),
-        getNetwork(),
-        getAutoLockMinutes(),
-      ]);
-      setNetwork(net);
-      setAutoLockMinutes(lockMins);
+      try {
+        const [exists, net, lockMins, persistUnlock, hideBalances] = await Promise.all([
+          vaultExists(),
+          getNetwork(),
+          getAutoLockMinutes(),
+          getPersistUnlockSession(),
+          getHidePortfolioBalances(),
+        ]);
+        setNetwork(net);
+        setAutoLockMinutes(lockMins);
+        setPersistUnlockSessionEnabled(persistUnlock === true);
+        setHidePortfolioBalancesState(hideBalances === true);
 
-      if (!exists) {
-        // No vault — check for legacy address-only metadata from content bridge
-        const meta = await getWalletMeta();
-        if (meta?.address) {
-          // External wallet (Kasware/Kastle user) — no vault, show balance only
-          setSession({ mnemonic: "", address: meta.address, network: net, autoLockAt: Infinity });
-          fetchBalances(meta.address);
+        if (!exists) {
+          // No vault — check for legacy address-only metadata from content bridge
+          const meta = await getWalletMeta();
+          if (meta?.address) {
+            // External wallet (Kasware/Kastle user) — no vault, show balance only
+            setSession({ mnemonic: "", address: meta.address, network: net, autoLockAt: Infinity });
+            fetchBalances(meta.address, net);
+            setScreen({ type: "unlocked" });
+          } else {
+            setScreen({ type: "first_run" });
+          }
+          return;
+        }
+
+        // Vault exists — check if session is still active (popup reopened within TTL)
+        const existing = getSession() ?? await restoreSessionFromCache();
+        if (existing) {
+          setSession(existing);
+          fetchBalances(existing.address, net);
           setScreen({ type: "unlocked" });
         } else {
-          setScreen({ type: "first_run" });
+          // Show the wallet address on the lock screen so the user knows whose account they're signing into
+          const meta = await getWalletMeta();
+          setLockedAddress(meta?.address ?? null);
+          setScreen({ type: "locked" });
         }
-        return;
-      }
-
-      // Vault exists — check if session is still active (popup reopened within TTL)
-      const existing = getSession();
-      if (existing) {
-        setSession(existing);
-        fetchBalances(existing.address);
-        setScreen({ type: "unlocked" });
-      } else {
-        setScreen({ type: "locked" });
+      } catch {
+        // If init fails for any reason, fall through to first_run so the popup
+        // is never stuck on the black loading screen.
+        setScreen({ type: "first_run" });
       }
     })();
   }, []);
 
-  // ── Pending site-connect request check ──────────────────────────────────────
-  useEffect(() => {
-    (chrome.storage as any).session.get(PENDING_CONNECT_KEY).then((result: any) => {
-      const pending = result?.[PENDING_CONNECT_KEY];
-      if (pending?.requestId) setPendingConnect(pending);
+  // ── Pending site approval request sync ─────────────────────────────────────
+  const readPendingApprovals = useCallback(() => {
+    const sessionStore = (chrome.storage as any)?.session;
+    if (!sessionStore?.get) return;
+    sessionStore.get([PENDING_CONNECT_KEY, PENDING_SIGN_KEY]).then((result: any) => {
+      const pendingConnectReq = result?.[PENDING_CONNECT_KEY];
+      const pendingSignReq = result?.[PENDING_SIGN_KEY];
+      setPendingConnect(pendingConnectReq?.requestId ? pendingConnectReq : null);
+      setPendingSign(
+        pendingSignReq?.requestId && typeof pendingSignReq?.message === "string"
+          ? pendingSignReq
+          : null,
+      );
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    readPendingApprovals();
+  }, [readPendingApprovals]);
+
+  useEffect(() => {
+    const onChanged = (_changes: unknown, areaName: string) => {
+      if (areaName !== "session") return;
+      readPendingApprovals();
+    };
+    chrome.storage.onChanged.addListener(onChanged as any);
+    return () => chrome.storage.onChanged.removeListener(onChanged as any);
+  }, [readPendingApprovals]);
+
+  useEffect(() => {
+    setSiteSignError(null);
+  }, [pendingSign?.requestId]);
 
   // ── Auto-lock listener ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -101,30 +199,114 @@ export function Popup() {
     return () => clearInterval(interval);
   }, [screen.type, session]);
 
-  // ── Balance fetch ────────────────────────────────────────────────────────────
-  const fetchBalances = useCallback(async (address: string) => {
-    try {
-      const [bal, price] = await Promise.all([
-        fetchKasBalance(address),
-        fetchKasUsdPrice(),
-      ]);
-      setBalance(bal);
-      setUsdPrice(price);
-    } catch { /* non-fatal */ }
+  const syncEndpointHealth = useCallback((targetNetwork: string) => {
+    const snapshots = getKaspaEndpointHealth(targetNetwork) as Array<{
+      base: string;
+      lastOkAt: number;
+      lastFailAt: number;
+      consecutiveFails: number;
+    }>;
+    if (!Array.isArray(snapshots) || snapshots.length === 0) {
+      setActiveRpcEndpoint(null);
+      return;
+    }
+
+    const ranked = [...snapshots].sort((a, b) => {
+      if (a.lastOkAt !== b.lastOkAt) return b.lastOkAt - a.lastOkAt;
+      if (a.consecutiveFails !== b.consecutiveFails) return a.consecutiveFails - b.consecutiveFails;
+      return b.lastFailAt - a.lastFailAt;
+    });
+
+    setActiveRpcEndpoint(ranked[0]?.base ?? null);
   }, []);
+
+  // ── Live DAG score ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (screen.type !== "unlocked") return;
+    const poll = async () => {
+      const info = await fetchDagInfo(network);
+      if (info?.virtualDaaScore) {
+        setDagScore(info.virtualDaaScore);
+        setDagUpdatedAt(Date.now());
+        setFeedStatusMessage((prev) => (
+          prev?.startsWith("Live BlockDAG feed") ? null : prev
+        ));
+      } else {
+        setFeedStatusMessage("Live BlockDAG feed unavailable — retrying…");
+      }
+      syncEndpointHealth(network);
+    };
+    poll();
+    const id = setInterval(poll, 20_000); // refresh every 20 s
+    return () => clearInterval(id);
+  }, [screen.type, network, syncEndpointHealth]);
+
+  // ── Balance fetch ────────────────────────────────────────────────────────────
+  const fetchBalances = useCallback(async (address: string, targetNetwork: string) => {
+    try {
+      const networkAddress = withKaspaAddressNetwork(address, targetNetwork);
+      const [balanceResult, priceResult] = await Promise.allSettled([
+        fetchKasBalance(networkAddress, targetNetwork),
+        fetchKasUsdPrice(targetNetwork),
+      ]);
+
+      const now = Date.now();
+      let degraded = false;
+
+      if (balanceResult.status === "fulfilled") {
+        setBalance(balanceResult.value);
+        setBalanceUpdatedAt(now);
+      } else {
+        degraded = true;
+      }
+
+      if (priceResult.status === "fulfilled") {
+        setUsdPrice(priceResult.value);
+        setPriceUpdatedAt(now);
+      } else {
+        degraded = true;
+      }
+
+      setFeedStatusMessage((prev) => {
+        if (degraded) return "Live balance/price feed degraded — retrying…";
+        return prev?.startsWith("Live balance/price feed") ? null : prev;
+      });
+      syncEndpointHealth(targetNetwork);
+    } catch { /* non-fatal */ }
+  }, [syncEndpointHealth]);
+
+  // ── Live balance + price polling ───────────────────────────────────────────
+  useEffect(() => {
+    if (screen.type !== "unlocked" || !session?.address) return;
+    const poll = () => {
+      fetchBalances(session.address, network);
+    };
+    poll();
+    const id = setInterval(poll, 15_000);
+    return () => clearInterval(id);
+  }, [screen.type, session?.address, network, fetchBalances]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
   const handleUnlock = (s: UnlockedSession) => {
+    setLockedAddress(null);
     setSession(s);
-    fetchBalances(s.address);
+    fetchBalances(s.address, network);
     setScreen({ type: "unlocked" });
   };
 
   const handleLock = () => {
+    // Persist the address so the lock screen shows "Welcome back, kaspa:qp…"
+    setLockedAddress(session?.address ?? null);
     lockWallet();
     setSession(null);
     setBalance(null);
     setUsdPrice(0);
+    setDagScore(null);
+    setActiveRpcEndpoint(null);
+    setBalanceUpdatedAt(null);
+    setPriceUpdatedAt(null);
+    setDagUpdatedAt(null);
+    setFeedStatusMessage(null);
     setScreen({ type: "locked" });
   };
 
@@ -133,36 +315,170 @@ export function Popup() {
     await resetWallet();
     setSession(null);
     setBalance(null);
+    setUsdPrice(0);
+    setDagScore(null);
+    setActiveRpcEndpoint(null);
+    setBalanceUpdatedAt(null);
+    setPriceUpdatedAt(null);
+    setDagUpdatedAt(null);
+    setFeedStatusMessage(null);
     setScreen({ type: "first_run" });
   };
 
   const handleFirstRunComplete = (s: UnlockedSession) => {
     setSession(s);
-    fetchBalances(s.address);
+    fetchBalances(s.address, network);
     setScreen({ type: "unlocked" });
   };
 
-  const copyAddress = async () => {
-    if (!session?.address) return;
+  const activeAddress = (() => {
+    if (!session?.address) return null;
     try {
-      await navigator.clipboard.writeText(session.address);
+      return withKaspaAddressNetwork(session.address, network);
+    } catch {
+      return session.address;
+    }
+  })();
+
+  const copyAddress = async () => {
+    if (!activeAddress) return;
+    try {
+      await navigator.clipboard.writeText(activeAddress);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch { /* non-fatal */ }
   };
 
+  // ── Network cycling ──────────────────────────────────────────────────────────
+  const handleCycleNetwork = async () => {
+    const idx = NETWORKS.indexOf(network as typeof NETWORKS[number]);
+    const next = NETWORKS[(idx + 1) % NETWORKS.length];
+    setNetwork(next);
+    await saveNetwork(next);
+    setBalance(null);
+    setDagScore(null);
+    setActiveRpcEndpoint(null);
+    setBalanceUpdatedAt(null);
+    setPriceUpdatedAt(null);
+    setDagUpdatedAt(null);
+    setFeedStatusMessage(null);
+    if (session?.address) {
+      try {
+        await setWalletMeta({ address: withKaspaAddressNetwork(session.address, next), network: next });
+      } catch { /* non-fatal */ }
+      fetchBalances(session.address, next);
+    }
+  };
+
   // ── User activity → extend session TTL ───────────────────────────────────────
   const onUserActivity = () => {
-    if (screen.type === "unlocked") extendSession(autoLockMinutes);
+    if (screen.type === "unlocked") {
+      extendSession(autoLockMinutes, { persistSession: persistUnlockSessionEnabled });
+    }
+  };
+
+  const handleAutoLockMinutesChanged = async (minutes: number) => {
+    setAutoLockMinutes(minutes);
+    await saveAutoLockMinutes(minutes);
+    if (screen.type === "unlocked") {
+      extendSession(minutes, { persistSession: persistUnlockSessionEnabled });
+    }
+  };
+
+  const handlePersistUnlockSessionChanged = async (enabled: boolean) => {
+    setPersistUnlockSessionEnabled(enabled);
+    await setPersistUnlockSession(enabled);
+    await setSessionPersistence(enabled);
+    if (screen.type === "unlocked") {
+      extendSession(autoLockMinutes, { persistSession: enabled });
+    }
+  };
+
+  const handleToggleHidePortfolioBalances = async () => {
+    const next = !hidePortfolioBalances;
+    setHidePortfolioBalancesState(next);
+    try {
+      await setHidePortfolioBalances(next);
+    } catch {
+      // Keep local state optimistic; storage write can retry on next toggle.
+    }
+  };
+
+  // If a site asks to sign but the active account is external (no vault mnemonic),
+  // reject immediately because only managed vault accounts can sign here.
+  useEffect(() => {
+    if (screen.type !== "unlocked" || !pendingSign) return;
+    if (session?.mnemonic) return;
+    chrome.runtime.sendMessage({
+      type: "FORGEOS_SIGN_REJECT",
+      requestId: pendingSign.requestId,
+      error: "Managed wallet is required for site signing",
+    }).catch(() => {});
+    setPendingSign(null);
+  }, [screen.type, pendingSign, session?.mnemonic]);
+
+  const handleApproveSiteSign = async () => {
+    const request = pendingSign;
+    if (!request) return;
+    if (!session?.mnemonic) {
+      setSiteSignError("Wallet is locked. Unlock to sign.");
+      return;
+    }
+
+    setSigningSiteRequest(true);
+    setSiteSignError(null);
+
+    try {
+      const signature = await signManagedMessage(session.mnemonic, request.message, {
+        mnemonicPassphrase: session.mnemonicPassphrase,
+        derivation: session.derivation,
+      });
+      await chrome.runtime.sendMessage({
+        type: "FORGEOS_SIGN_APPROVE",
+        requestId: request.requestId,
+        signature,
+      });
+      setPendingSign(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSiteSignError(msg || "Signing failed");
+    } finally {
+      setSigningSiteRequest(false);
+    }
+  };
+
+  const handleRejectSiteSign = () => {
+    if (!pendingSign) return;
+    chrome.runtime.sendMessage({
+      type: "FORGEOS_SIGN_REJECT",
+      requestId: pendingSign.requestId,
+      error: "Signing rejected by user",
+    }).catch(() => {});
+    setPendingSign(null);
+    setSiteSignError(null);
   };
 
   // ── Screen renders ────────────────────────────────────────────────────────────
   if (screen.type === "loading") {
     return (
-      <div style={{ width: 360, height: 560, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", ...mono }}>
-        <div style={{ textAlign: "center" }}>
-          <img src="../icons/icon48.png" alt="" style={{ width: 32, height: 32, objectFit: "contain", opacity: 0.6 }} />
-          <div style={{ fontSize: 8, color: C.dim, marginTop: 8, letterSpacing: "0.1em" }}>LOADING…</div>
+      <div style={{
+        width: EXTENSION_POPUP_BASE_WIDTH,
+        height: EXTENSION_POPUP_BASE_MIN_HEIGHT,
+        ...popupShellBackground(),
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        ...mono,
+        position: "relative",
+        overflowX: "hidden",
+        overflowY: "auto",
+        zoom: EXTENSION_POPUP_UI_SCALE,
+      }}>
+        {/* Atmospheric blob */}
+        <div style={{ position: "absolute", top: "30%", left: "50%", transform: "translate(-50%,-50%)", width: 260, height: 260, borderRadius: "50%", background: `radial-gradient(ellipse, ${C.accent}12 0%, transparent 70%)`, pointerEvents: "none" }} />
+        <div style={{ textAlign: "center", position: "relative" }}>
+          <img src="../icons/icon48.png" alt="" style={{ width: 36, height: 36, objectFit: "contain", opacity: 0.7, filter: "drop-shadow(0 0 10px rgba(57,221,182,0.5))" }} />
+          <div style={{ fontSize: 8, color: C.dim, marginTop: 10, letterSpacing: "0.14em" }}>LOADING…</div>
         </div>
       </div>
     );
@@ -173,68 +489,141 @@ export function Popup() {
   }
 
   if (screen.type === "locked") {
-    return <LockScreen onUnlock={handleUnlock} onReset={handleReset} />;
+    return (
+      <LockScreen
+        walletAddress={lockedAddress}
+        autoLockMinutes={autoLockMinutes}
+        persistSession={persistUnlockSessionEnabled}
+        onUnlock={handleUnlock}
+        onReset={handleReset}
+      />
+    );
+  }
+
+  const isManagedWallet = Boolean(session?.mnemonic);
+
+  // ── Pending sign approval (MetaMask-style) ───────────────────────────────────
+  if (pendingSign && activeAddress && isManagedWallet) {
+    return (
+      <SignApprovalScreen
+        address={activeAddress}
+        network={network}
+        origin={pendingSign.origin}
+        message={pendingSign.message}
+        loading={signingSiteRequest}
+        error={siteSignError}
+        onApprove={handleApproveSiteSign}
+        onReject={handleRejectSiteSign}
+      />
+    );
   }
 
   // ── Pending connect approval (MetaMask-style) ────────────────────────────────
-  if (pendingConnect && session?.address) {
+  if (pendingConnect && activeAddress) {
     return (
       <ConnectApprovalScreen
-        address={session.address}
+        address={activeAddress}
         network={network}
+        origin={pendingConnect.origin}
         onApprove={() => {
           chrome.runtime.sendMessage({
             type: "FORGEOS_CONNECT_APPROVE",
-            address: session!.address,
+            requestId: pendingConnect.requestId,
+            address: activeAddress,
             network,
           }).catch(() => {});
           setPendingConnect(null);
         }}
         onReject={() => {
-          chrome.runtime.sendMessage({ type: "FORGEOS_CONNECT_REJECT" }).catch(() => {});
+          chrome.runtime.sendMessage({
+            type: "FORGEOS_CONNECT_REJECT",
+            requestId: pendingConnect.requestId,
+          }).catch(() => {});
           setPendingConnect(null);
-          window.close();
         }}
       />
     );
   }
 
   // ── UNLOCKED — main popup UI ─────────────────────────────────────────────────
-  const address = session?.address ?? null;
-  const usdValue = balance !== null && usdPrice > 0 ? balance * usdPrice : null;
+  const address = activeAddress;
+  const displayCurrency: DisplayCurrency = "USD";
+  const portfolioUsdValue = balance !== null && usdPrice > 0 ? balance * usdPrice : null;
+  const portfolioDisplayValue =
+    portfolioUsdValue !== null ? formatFiatFromUsd(portfolioUsdValue, displayCurrency) : "—";
+  const maskedPortfolioDisplayValue = hidePortfolioBalances ? "••••••" : portfolioDisplayValue;
   const isMainnet = network === "mainnet";
-  const isManagedWallet = Boolean(session?.mnemonic);
+  const now = Date.now();
+
+  const isFeedFresh = (updatedAt: number | null, staleMs: number) =>
+    updatedAt !== null && now - updatedAt <= staleMs;
+  const balanceLive = isFeedFresh(balanceUpdatedAt, BALANCE_FEED_STALE_MS);
+  const priceLive = isFeedFresh(priceUpdatedAt, PRICE_FEED_STALE_MS);
+  const dagLive = isFeedFresh(dagUpdatedAt, DAG_FEED_STALE_MS);
+  const allFeedsLive = balanceLive && priceLive && dagLive;
+  const anyFeedLive = balanceLive || priceLive || dagLive;
+  const feedLabel = allFeedsLive ? "LIVE FEED" : anyFeedLive ? "PARTIAL FEED" : "FEED OFFLINE";
+  const feedColor = allFeedsLive ? C.ok : anyFeedLive ? C.warn : C.danger;
+  const latestFeedAt = Math.max(balanceUpdatedAt ?? 0, priceUpdatedAt ?? 0, dagUpdatedAt ?? 0);
+  const feedUpdatedLabel = latestFeedAt > 0
+    ? new Date(latestFeedAt).toLocaleTimeString([], { hour12: false })
+    : "never";
+  const activeEndpointLabel = (() => {
+    if (!activeRpcEndpoint) return "endpoint unknown";
+    try { return new URL(activeRpcEndpoint).host; } catch { return activeRpcEndpoint; }
+  })();
+
+  // Network badge: mainnet = green (ok), testnets = amber (warn)
+  const netColor = isMainnet ? C.ok : C.warn;
 
   return (
     <div
       onClick={onUserActivity}
-      style={{ width: 360, minHeight: 560, background: C.bg, display: "flex", flexDirection: "column", ...mono }}
+      style={{
+        width: EXTENSION_POPUP_BASE_WIDTH,
+        minHeight: EXTENSION_POPUP_BASE_MIN_HEIGHT,
+        ...popupShellBackground(),
+        display: "flex",
+        flexDirection: "column",
+        ...mono,
+        position: "relative",
+        overflowX: "hidden",
+        overflowY: "auto",
+        zoom: EXTENSION_POPUP_UI_SCALE,
+      }}
     >
+      {/* Atmospheric background blobs */}
+      <div style={{ position: "absolute", top: -60, left: "50%", transform: "translateX(-50%)", width: 320, height: 320, borderRadius: "50%", background: `radial-gradient(ellipse, ${C.accent}0D 0%, transparent 70%)`, pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "absolute", bottom: 40, right: -60, width: 200, height: 200, borderRadius: "50%", background: `radial-gradient(ellipse, ${C.accent}07 0%, transparent 70%)`, pointerEvents: "none", zIndex: 0 }} />
+
       {/* Header */}
-      <div style={{ padding: "12px 14px 10px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <img src="../icons/icon48.png" alt="Forge-OS" style={{ width: 22, height: 22, objectFit: "contain", filter: "drop-shadow(0 0 6px rgba(57,221,182,0.5))" }} />
-          <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.1em" }}>
+      <div style={{ padding: "13px 16px 11px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "relative", zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <img src="../icons/icon48.png" alt="Forge-OS" style={{ width: 24, height: 24, objectFit: "contain", filter: "drop-shadow(0 0 8px rgba(57,221,182,0.55))" }} />
+          <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.1em" }}>
             <span style={{ color: C.accent }}>FORGE</span><span style={{ color: C.text }}>-OS</span>
           </span>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{
-            fontSize: 8, color: isMainnet ? C.warn : C.ok, fontWeight: 700, letterSpacing: "0.1em",
-            background: isMainnet ? `${C.warn}15` : `${C.ok}15`,
-            border: `1px solid ${isMainnet ? C.warn : C.ok}30`,
-            borderRadius: 4, padding: "3px 7px",
-          }}>{network.toUpperCase()}</span>
+          <button
+            onClick={handleCycleNetwork}
+            title="Click to switch network"
+            style={{
+              fontSize: 8, color: netColor, fontWeight: 700, letterSpacing: "0.1em",
+              background: `${netColor}15`,
+              border: `1px solid ${netColor}35`,
+              borderRadius: 4, padding: "3px 8px", cursor: "pointer", ...mono,
+            }}
+          >{NETWORK_LABELS[network] ?? network.toUpperCase()}</button>
 
-          {/* Lock button — only for managed wallets */}
           {isManagedWallet && (
             <button
               onClick={handleLock}
               title="Lock wallet"
               style={{
                 background: "rgba(33,48,67,0.5)", border: `1px solid ${C.border}`,
-                borderRadius: 4, padding: "3px 7px",
+                borderRadius: 4, padding: "3px 8px",
                 color: C.dim, fontSize: 9, cursor: "pointer", ...mono,
               }}
             >🔒</button>
@@ -244,72 +633,76 @@ export function Popup() {
 
       {/* Address + balance hero */}
       {address ? (
-        <div style={{ padding: "16px 14px 12px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
+        <div style={{ padding: "20px 16px 16px", borderBottom: `1px solid ${C.border}`, textAlign: "center", position: "relative", zIndex: 1 }}>
           {/* Address row */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 14 }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.ok, flexShrink: 0 }} />
-            <span style={{ fontSize: 9, color: C.dim }}>{shortAddr(address)}</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 16 }}>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.ok, flexShrink: 0, boxShadow: `0 0 6px ${C.ok}` }} />
+            <span style={{ fontSize: 9, color: C.dim, letterSpacing: "0.04em" }}>{shortAddr(address)}</span>
             <button
               onClick={copyAddress}
-              style={{ background: "none", border: "none", cursor: "pointer", color: copied ? C.ok : C.dim, fontSize: 9, padding: 0 }}
-            >{copied ? "✓" : "copy"}</button>
+              style={{
+                ...outlineButton(copied ? C.ok : C.dim, true),
+                padding: "3px 8px",
+                fontSize: 8,
+                letterSpacing: "0.08em",
+                color: copied ? C.ok : C.dim,
+                minWidth: 56,
+              }}
+            >{copied ? "COPIED" : "COPY"}</button>
+            <button
+              onClick={handleToggleHidePortfolioBalances}
+              style={{
+                ...outlineButton(hidePortfolioBalances ? C.warn : C.dim, true),
+                padding: "3px 8px",
+                fontSize: 8,
+                letterSpacing: "0.08em",
+                color: hidePortfolioBalances ? C.warn : C.dim,
+                minWidth: 56,
+              }}
+            >{hidePortfolioBalances ? "SHOW" : "HIDE"}</button>
           </div>
 
-          {/* Balance */}
-          <>
-            {/* USDC / USD equivalent — primary display */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 4 }}>
-              <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#2775CA", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 0 8px rgba(39,117,202,0.5)" }}>
-                <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", lineHeight: 1 }}>$</span>
-              </div>
-              <div style={{ fontSize: 30, fontWeight: 700, color: C.text, letterSpacing: "0.01em", lineHeight: 1 }}>
-                {usdValue !== null ? fmt(usdValue, 2) : "—"}
-                <span style={{ fontSize: 12, color: "#2775CA", marginLeft: 5, fontWeight: 700 }}>USDC</span>
-              </div>
+          {/* Portfolio value (fiat primary) */}
+          <div style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 7, color: C.dim, letterSpacing: "0.1em", marginBottom: 6 }}>
+              TOTAL PORTFOLIO VALUE
             </div>
-            {/* Kaspa stablecoin readiness badge */}
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#8F7BFF15", border: "1px solid #8F7BFF40", borderRadius: 4, padding: "2px 8px", marginBottom: 6 }}>
-              <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.purple, display: "inline-block" }} />
-              <span style={{ fontSize: 7, color: C.purple, fontWeight: 700, letterSpacing: "0.1em" }}>KASPA STABLECOIN · MAY 5 READY</span>
+            <div style={{ fontSize: 38, fontWeight: 700, color: C.text, letterSpacing: "0.005em", lineHeight: 1 }}>
+              {maskedPortfolioDisplayValue}
             </div>
-            {/* KAS — secondary */}
-            {balance !== null && (
-              <div style={{ fontSize: 10, color: C.dim, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                <img src="../icons/icon16.png" alt="KAS" style={{ width: 11, height: 11, opacity: 0.6 }} />
-                {fmt(balance, 2)} KAS
-              </div>
-            )}
-          </>
+          </div>
 
           {/* Action buttons */}
-          <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "center" }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             {[
-              { label: "SEND",    action: () => setTab("wallet") },
-              { label: "RECEIVE", action: () => setTab("wallet") },
-              { label: "SWAP ↗",  action: () => chrome.tabs.create({ url: "https://forgeos.xyz" }) },
+              { label: "SEND",    action: () => { setTab("wallet"); setWalletMode("send"); } },
+              { label: "RECEIVE", action: () => { setTab("wallet"); setWalletMode("receive"); } },
+              { label: "SWAP",  action: () => setTab("swap") },
             ].map(btn => (
               <button
                 key={btn.label}
                 onClick={btn.action}
                 style={{
-                  flex: 1, background: `linear-gradient(145deg, ${C.accent}18, rgba(8,13,20,0.6))`,
-                  border: `1px solid ${C.accent}35`, borderRadius: 8, padding: "7px 0",
+                  flex: 1,
+                  background: `linear-gradient(145deg, ${C.accent}1A, rgba(8,13,20,0.7))`,
+                  border: `1px solid ${C.accent}40`,
+                  borderRadius: 10, padding: "9px 0",
                   color: C.accent, fontSize: 9, fontWeight: 700, cursor: "pointer", ...mono,
-                  letterSpacing: "0.08em",
+                  letterSpacing: "0.1em",
+                  transition: "background 0.15s, border-color 0.15s",
                 }}
               >{btn.label}</button>
             ))}
           </div>
         </div>
       ) : (
-        /* External wallet / no address */
-        <div style={{ padding: "24px 14px", textAlign: "center", borderBottom: `1px solid ${C.border}` }}>
-          <div style={{ fontSize: 10, color: C.dim, marginBottom: 10 }}>No wallet connected</div>
+        <div style={{ padding: "28px 16px", textAlign: "center", borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 1 }}>
+          <div style={{ fontSize: 10, color: C.dim, marginBottom: 12 }}>No wallet connected</div>
           <button
-            onClick={() => chrome.tabs.create({ url: "https://forgeos.xyz" })}
+            onClick={() => chrome.tabs.create({ url: "https://forge-os.xyz" })}
             style={{
               background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`, color: "#04110E",
-              border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 10,
+              border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 10,
               fontWeight: 700, cursor: "pointer", ...mono, letterSpacing: "0.08em",
             }}
           >OPEN FORGE-OS →</button>
@@ -317,48 +710,84 @@ export function Popup() {
       )}
 
       {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}` }}>
-        {(["wallet", "agents", "swap", "security"] as Tab[]).map(t => (
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 1 }}>
+        {(["wallet", "swap", "agents", "security"] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             style={{
-              flex: 1, background: "none", border: "none",
+              flex: 1, background: tab === t ? `${C.accent}08` : "none", border: "none",
               borderBottom: `2px solid ${tab === t ? C.accent : "transparent"}`,
               color: tab === t ? C.accent : C.dim,
               fontSize: 9, fontWeight: 700, cursor: "pointer",
-              padding: "8px 0", letterSpacing: "0.1em", ...mono,
-              textTransform: "uppercase", transition: "color 0.15s, border-color 0.15s",
+              padding: "9px 0", letterSpacing: "0.1em", ...mono,
+              textTransform: "uppercase", transition: "color 0.15s, border-color 0.15s, background 0.15s",
+              boxShadow: tab === t ? `0 2px 12px ${C.accent}25` : "none",
             }}
           >{t}</button>
         ))}
       </div>
 
       {/* Tab content */}
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <div style={{ flex: 1, overflow: "auto", position: "relative", zIndex: 1 }}>
         {tab === "wallet" && (
-          <WalletTab address={address} balance={balance} usdPrice={usdPrice} network={network} />
+          <WalletTab
+            address={address}
+            balance={balance}
+            usdPrice={usdPrice}
+            network={network}
+            onOpenSwap={() => setTab("swap")}
+            mode={walletMode}
+            onModeConsumed={() => setWalletMode(undefined)}
+            onBalanceInvalidated={() => session?.address && fetchBalances(session.address, network)}
+            hideBalances={hidePortfolioBalances}
+          />
         )}
-        {tab === "agents" && <AgentsTab />}
         {tab === "swap" && <SwapTab />}
+        {tab === "agents" && <AgentsTab network={network} />}
         {tab === "security" && (
           <SecurityTab
             address={address}
             network={network}
             isManagedWallet={isManagedWallet}
+            autoLockMinutes={autoLockMinutes}
+            persistUnlockSessionEnabled={persistUnlockSessionEnabled}
+            onAutoLockMinutesChange={handleAutoLockMinutesChanged}
+            onPersistUnlockSessionChange={handlePersistUnlockSessionChanged}
             onLock={handleLock}
           />
         )}
       </div>
 
-      {/* Footer */}
-      <div style={{ padding: "6px 14px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 7, color: C.muted, letterSpacing: "0.08em" }}>FORGE-OS · KASPA</span>
+      {/* Footer — live DAG info */}
+      <div style={{ padding: "7px 16px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "relative", zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 7, color: C.muted, letterSpacing: "0.06em" }}>FORGE-OS</span>
+          <span style={{ fontSize: 7, color: feedColor, letterSpacing: "0.05em", fontWeight: 700 }}>
+            · {feedLabel}
+          </span>
+          {dagScore && (
+            <span style={{ fontSize: 7, color: C.dim, letterSpacing: "0.04em" }}>
+              · {NETWORK_BPS[network] ?? 10} BPS · DAA {(parseInt(dagScore, 10) / 1_000_000).toFixed(1)}M
+            </span>
+          )}
+          <span style={{ fontSize: 7, color: C.dim, letterSpacing: "0.04em" }}>
+            · RPC {activeEndpointLabel}
+          </span>
+          <span style={{ fontSize: 7, color: C.dim, letterSpacing: "0.04em" }}>
+            · UPDATE {feedUpdatedLabel}
+          </span>
+        </div>
         <button
-          onClick={() => chrome.tabs.create({ url: "https://forgeos.xyz" })}
+          onClick={() => chrome.tabs.create({ url: "https://forge-os.xyz" })}
           style={{ background: "none", border: "none", color: C.accent, fontSize: 7, cursor: "pointer", ...mono, letterSpacing: "0.06em" }}
         >OPEN SITE ↗</button>
       </div>
+      {feedStatusMessage && (
+        <div style={{ padding: "0 16px 7px", fontSize: 7, color: C.warn, letterSpacing: "0.03em", position: "relative", zIndex: 1 }}>
+          {feedStatusMessage}
+        </div>
+      )}
     </div>
   );
 }

@@ -45,7 +45,7 @@ describe("buildSignInMessage", () => {
     const { buildSignInMessage } = await import("../../src/auth/siwa");
     const msg = buildSignInMessage("kaspa:qtest", "mainnet", "abc123");
     expect(msg).toContain("Sign in to Forge.OS");
-    expect(msg).toContain("Domain: forgeos.xyz");
+    expect(msg).toContain("Domain: forge-os.xyz");
     expect(msg).toContain("Address: kaspa:qtest");
     expect(msg).toContain("Nonce: abc123");
     expect(msg).toContain("Network: mainnet");
@@ -54,12 +54,12 @@ describe("buildSignInMessage", () => {
     expect(msg).toContain("will not trigger a blockchain transaction");
   });
 
-  it("is domain-bound to forgeos.xyz (anti-phishing)", async () => {
+  it("is domain-bound to forge-os.xyz (anti-phishing)", async () => {
     const { buildSignInMessage } = await import("../../src/auth/siwa");
     const msg = buildSignInMessage("kaspa:q", "mainnet", "n1");
-    // Only forgeos.xyz should appear — a phishing page on evil.com cannot replay this
-    expect(msg).toContain("Domain: forgeos.xyz");
-    expect(msg).not.toMatch(/Domain: (?!forgeos\.xyz)/);
+    // Only forge-os.xyz should appear — a phishing page on evil.com cannot replay this
+    expect(msg).toContain("Domain: forge-os.xyz");
+    expect(msg).not.toMatch(/Domain: (?!forge-os\.xyz)/);
   });
 
   it("includes expiry ~24h after issuance", async () => {

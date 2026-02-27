@@ -5,11 +5,11 @@ import type { PendingTx, DryRunResult } from "./types";
 import { getOrSyncUtxos } from "../utxo/utxoSync";
 import { estimateFee } from "../network/kaspaClient";
 import { isKaspaAddress } from "../../src/helpers";
-import { getSession } from "../vault/vault";
 
 const NETWORK_PREFIXES: Record<string, string> = {
   mainnet: "kaspa:",
   "testnet-10": "kaspatest:",
+  "testnet-11": "kaspatest:",
 };
 
 /**
@@ -20,7 +20,7 @@ const NETWORK_PREFIXES: Record<string, string> = {
  *  2. Fee correctness    — actual network fee ≤ estimated fee (rejects under-priced txs).
  *  3. Balance integrity  — inputs == outputs + change + fee (no value creation/loss).
  *  4. Destination integrity — all output addresses are valid Kaspa addresses.
- *  5. Network match      — output address prefixes and session network match tx.network.
+ *  5. Network match      — output/change address prefixes must match tx.network.
  *
  * @returns DryRunResult — always returned (never throws); check .valid.
  */
@@ -89,11 +89,9 @@ export async function dryRunValidate(tx: PendingTx): Promise<DryRunResult> {
         );
       }
     }
-    // Also validate session network matches tx network (prevents cross-network signing)
-    const session = getSession();
-    if (session && session.network !== tx.network) {
+    if (tx.changeOutput && !tx.changeOutput.address.toLowerCase().startsWith(expectedPrefix)) {
       errors.push(
-        `SESSION_NETWORK_MISMATCH: session is on "${session.network}" but tx targets "${tx.network}"`,
+        `NETWORK_MISMATCH: change address "${tx.changeOutput.address}" does not match network "${tx.network}"`,
       );
     }
   }

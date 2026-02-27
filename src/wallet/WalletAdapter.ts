@@ -126,6 +126,181 @@ const ghostProvider = createGhostProvider({
   normalizeOutputList,
 });
 
+function getForgeOSProvider(): any | null {
+  try {
+    const provider = typeof window !== "undefined" ? (window as any).forgeos : undefined;
+    return provider?.isForgeOS ? provider : null;
+  } catch {
+    return null;
+  }
+}
+
+const FORGEOS_BRIDGE_SENTINEL = "__forgeos__" as const;
+const FORGEOS_BRIDGE_TIMEOUT_MS = 120_000;
+
+export type ForgeOSTransportType = "provider" | "bridge" | "managed" | "none";
+
+export interface ForgeOSBridgeStatus {
+  providerInjected: boolean;
+  bridgeReachable: boolean;
+  managedWalletPresent: boolean;
+  transport: ForgeOSTransportType;
+}
+
+type ForgeBridgePendingRequest = {
+  resolve: (value: any) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+const forgeBridgePending = new Map<string, ForgeBridgePendingRequest>();
+let forgeBridgeListenerAttached = false;
+
+function ensureForgeBridgeListener(): void {
+  if (forgeBridgeListenerAttached || typeof window === "undefined") return;
+  window.addEventListener("message", (ev: any) => {
+    if (ev?.source !== window) return;
+    const msg = ev?.data as Record<string, unknown> | undefined;
+    if (!msg?.[FORGEOS_BRIDGE_SENTINEL]) return;
+    const requestId = typeof msg.requestId === "string" ? msg.requestId : "";
+    if (!requestId) return;
+    if (!("result" in msg) && !("error" in msg)) return;
+
+    const pending = forgeBridgePending.get(requestId);
+    if (!pending) return;
+
+    clearTimeout(pending.timer);
+    forgeBridgePending.delete(requestId);
+
+    if (msg.error) {
+      pending.reject(new Error(String(msg.error)));
+      return;
+    }
+    pending.resolve(msg.result);
+  });
+  forgeBridgeListenerAttached = true;
+}
+
+function bridgeRequest(
+  type: string,
+  extra?: Record<string, unknown>,
+  timeoutMs: number = FORGEOS_BRIDGE_TIMEOUT_MS,
+): Promise<any> {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("Forge-OS bridge unavailable outside browser context."));
+  }
+  ensureForgeBridgeListener();
+  return new Promise((resolve, reject) => {
+    const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const timer = setTimeout(() => {
+      forgeBridgePending.delete(requestId);
+      reject(new Error("Forge-OS: bridge request timed out"));
+    }, Math.max(250, timeoutMs));
+
+    forgeBridgePending.set(requestId, { resolve, reject, timer });
+    window.postMessage(
+      {
+        [FORGEOS_BRIDGE_SENTINEL]: true,
+        type,
+        requestId,
+        ...(extra ?? {}),
+      },
+      "*",
+    );
+  });
+}
+
+async function waitForForgeOSBridge(timeoutMs = 2_500): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const deadline = Date.now() + Math.max(250, timeoutMs);
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    try {
+      const result = await bridgeRequest(
+        "FORGEOS_BRIDGE_PING",
+        undefined,
+        Math.min(700, Math.max(250, remaining)),
+      );
+      if (result?.bridgeReady) return true;
+    } catch {}
+
+    if (remaining <= 300) break;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+  return false;
+}
+
+function createForgeOSBridgeProvider() {
+  return {
+    isForgeOS: true as const,
+    version: "1.0.0-bridge",
+    async connect(): Promise<{ address: string; network: string } | null> {
+      return bridgeRequest("FORGEOS_CONNECT");
+    },
+    async signMessage(message: string): Promise<string> {
+      return bridgeRequest("FORGEOS_SIGN", { message });
+    },
+    openExtension(): void {
+      if (typeof window === "undefined") return;
+      window.postMessage({ [FORGEOS_BRIDGE_SENTINEL]: true, type: "FORGEOS_OPEN_POPUP" }, "*");
+    },
+    disconnect(): void {},
+  };
+}
+
+async function resolveForgeOSTransport(
+  providerTimeoutMs: number,
+  bridgeTimeoutMs: number,
+): Promise<any | null> {
+  const current = getForgeOSProvider();
+  if (current?.isForgeOS) return current;
+
+  // Prefer bridge path first: it works even when MAIN-world injector is blocked.
+  if (await waitForForgeOSBridge(bridgeTimeoutMs)) {
+    return createForgeOSBridgeProvider();
+  }
+
+  const lateProvider = await waitForForgeOSProvider(providerTimeoutMs);
+  if (lateProvider?.isForgeOS) return lateProvider;
+
+  // Final short retry for delayed bridge startup.
+  if (await waitForForgeOSBridge(Math.min(1_200, bridgeTimeoutMs))) {
+    return createForgeOSBridgeProvider();
+  }
+
+  return null;
+}
+
+async function waitForForgeOSProvider(timeoutMs = 2500): Promise<any | null> {
+  const current = getForgeOSProvider();
+  if (current) return current;
+  if (typeof window === "undefined") return null;
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (provider: any | null) => {
+      if (done) return;
+      done = true;
+      clearInterval(poll);
+      clearTimeout(timeout);
+      window.removeEventListener("forgeos#initialized", onInitialized as EventListener);
+      resolve(provider);
+    };
+    const onInitialized = () => finish(getForgeOSProvider());
+
+    window.addEventListener("forgeos#initialized", onInitialized as EventListener);
+
+    const poll = window.setInterval(() => {
+      const provider = getForgeOSProvider();
+      if (provider) finish(provider);
+    }, 75);
+
+    const timeout = window.setTimeout(() => {
+      finish(getForgeOSProvider());
+    }, Math.max(250, timeoutMs));
+  });
+}
+
 export const WalletAdapter = {
   detect() {
     let kasware: any;
@@ -168,6 +343,24 @@ export const WalletAdapter = {
     };
   },
 
+  async probeForgeOSBridgeStatus(timeoutMs = 900): Promise<ForgeOSBridgeStatus> {
+    const providerInjected = !!getForgeOSProvider();
+    const managedWalletPresent = !!loadManagedWallet()?.address;
+    const bridgeReachable = await waitForForgeOSBridge(timeoutMs).catch(() => false);
+    const transport: ForgeOSTransportType =
+      providerInjected ? "provider"
+      : bridgeReachable ? "bridge"
+      : managedWalletPresent ? "managed"
+      : "none";
+
+    return {
+      providerInjected,
+      bridgeReachable,
+      managedWalletPresent,
+      transport,
+    };
+  },
+
   async connectKasware() {
     return kaswareProvider.connect();
   },
@@ -178,9 +371,9 @@ export const WalletAdapter = {
 
   async connectForgeOS() {
     // Try extension provider first (page-provider.ts injects window.forgeos)
-    const forgeos = (window as any).forgeos;
-    if (forgeos?.isForgeOS) {
-      const wallet = await forgeos.connect();
+    const provider = await resolveForgeOSTransport(3000, 1500);
+    if (provider?.isForgeOS) {
+      const wallet = await provider.connect();
       if (wallet?.address) {
         return { address: wallet.address, network: wallet.network, provider: "forgeos" };
       }
@@ -190,7 +383,9 @@ export const WalletAdapter = {
     if (managed?.address) {
       return { address: managed.address, network: managed.network, provider: "forgeos" };
     }
-    throw new Error("No Forge-OS wallet found. Please create or import a wallet first.");
+    throw new Error(
+      "No Forge-OS wallet bridge detected on this tab. Reload Forge-OS extension, refresh forge-os.xyz, and set extension Site access to allow this domain.",
+    );
   },
 
   connectKaspium(address: string) {
@@ -243,14 +438,17 @@ export const WalletAdapter = {
 
   async signMessageForgeOS(message: string) {
     // Try extension provider first
-    const forgeos = (window as any).forgeos;
-    if (forgeos?.isForgeOS) {
-      return forgeos.signMessage(message);
+    const provider = await resolveForgeOSTransport(1500, 1200);
+    if (provider?.isForgeOS) {
+      return provider.signMessage(message);
     }
     // Fallback: sign locally with managed wallet phrase
     const managed = loadManagedWallet();
     if (managed?.phrase) {
-      return managedSignMessage(managed.phrase, message);
+      return managedSignMessage(managed.phrase, message, {
+        mnemonicPassphrase: managed.mnemonicPassphrase,
+        derivation: managed.derivation,
+      });
     }
     throw new Error("No Forge-OS wallet found for signing.");
   },

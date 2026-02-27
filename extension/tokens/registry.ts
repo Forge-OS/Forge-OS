@@ -3,6 +3,7 @@
 // Feature flag:
 //   STABLES_ENABLED = false  →  USDT/USDC render as disabled scaffolding.
 //   Flip to true + set assetId when Kaspa native assets go live.
+//   ZRX remains disabled until this build enables 0x route execution.
 //
 // DO NOT add fake balances. DO NOT allow transfers for disabled tokens.
 
@@ -10,6 +11,7 @@ import type { Token, TokenId, TokenRegistry } from "./types";
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
 export const STABLES_ENABLED = false;
+export const ZEROX_ENABLED = false;
 
 // ── Default registry ──────────────────────────────────────────────────────────
 export const DEFAULT_REGISTRY: TokenRegistry = {
@@ -31,7 +33,7 @@ export const DEFAULT_REGISTRY: TokenRegistry = {
       decimals: 6,
       assetId: null,       // future Kaspa native asset ID
       enabled: STABLES_ENABLED,
-      disabledReason: STABLES_ENABLED ? null : "Not available on Kaspa yet.",
+      disabledReason: STABLES_ENABLED ? null : "Temporarily disabled in this wallet build.",
     },
     USDC: {
       id: "USDC",
@@ -40,7 +42,16 @@ export const DEFAULT_REGISTRY: TokenRegistry = {
       decimals: 6,
       assetId: null,
       enabled: STABLES_ENABLED,
-      disabledReason: STABLES_ENABLED ? null : "Not available on Kaspa yet.",
+      disabledReason: STABLES_ENABLED ? null : "Temporarily disabled in this wallet build.",
+    },
+    ZRX: {
+      id: "ZRX",
+      symbol: "0x",
+      name: "0x Protocol",
+      decimals: 18,
+      assetId: null,
+      enabled: ZEROX_ENABLED,
+      disabledReason: ZEROX_ENABLED ? null : "0x route is disabled in this wallet build.",
     },
   },
 };

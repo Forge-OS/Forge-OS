@@ -2,14 +2,26 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import webExtension from "vite-plugin-web-extension";
 import { resolve } from "path";
+import { patchKaspaWasmForBrowser } from "./build/vite-kaspa-wasm-browser";
 
 const browser = process.env.TARGET_BROWSER || "chrome";
-const ext = (p: string) => resolve(__dirname, "extension", p);
+const includeLocalhostMatches = process.env.FORGEOS_EXTENSION_LOCALHOST === "1";
+
+const SITE_MATCHES = [
+  "*://forge-os.xyz/*",
+  "*://www.forge-os.xyz/*",
+  "*://forgeos.xyz/*",
+  "*://www.forgeos.xyz/*",
+  ...(includeLocalhostMatches
+    ? ["*://localhost/*", "*://127.0.0.1/*"]
+    : []),
+];
 
 export default defineConfig({
   // Keep root at the project level so rollup resolves all imports from here.
   plugins: [
     react(),
+    patchKaspaWasmForBrowser(),
     webExtension({
       // Provide manifest as a function returning an object so all entry paths
       // can be absolute — avoids CWD-relative resolution issues in sub-builds.
@@ -17,7 +29,7 @@ export default defineConfig({
         manifest_version: 3,
         name: "Forge-OS",
         version: "1.0.0",
-        description: "Kaspa AI trading agents — wallet balance, send, receive, and agent monitoring.",
+        description: "Non-custodial Kaspa wallet — send, receive, DEX & swaps, AI agents. AES-256-GCM + PBKDF2. BIP44. Mainnet, TN10 & TN11.",
         action: {
           default_popup: "extension/popup/index.html",
           default_icon: { "16": "extension/icons/icon16.png", "48": "extension/icons/icon48.png", "128": "extension/icons/icon128.png" },
@@ -26,19 +38,34 @@ export default defineConfig({
         background: { service_worker: "extension/background/service-worker.ts", type: "module" },
         content_scripts: [
           {
-            matches: ["*://forgeos.xyz/*", "*://www.forgeos.xyz/*", "*://localhost/*"],
+            matches: [
+              ...SITE_MATCHES,
+            ],
             js: ["extension/content/page-provider.ts"],
             world: "MAIN",
             run_at: "document_start",
           },
           {
-            matches: ["*://forgeos.xyz/*", "*://www.forgeos.xyz/*", "*://localhost/*"],
+            matches: [
+              ...SITE_MATCHES,
+            ],
             js: ["extension/content/site-bridge.ts"],
             run_at: "document_idle",
           },
         ],
-        permissions: ["storage", "alarms", "clipboardWrite", "tabs"],
-        host_permissions: ["https://api.kaspa.org/*", "https://api-tn10.kaspa.org/*"],
+        // Allow WASM instantiation in extension pages (popup, options).
+        // 'wasm-unsafe-eval' is required by kaspa-wasm; safe because we only
+        // load our own bundled WASM, never remote/user-supplied code.
+        content_security_policy: {
+          extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+        },
+        permissions: ["storage", "alarms", "clipboardWrite", "tabs", "windows"],
+        host_permissions: [
+          "https://api.kaspa.org/*",
+          "https://api-tn10.kaspa.org/*",
+          "https://api-tn11.kaspa.org/*",
+          "https://*.kaspa.org/*",
+        ],
       }),
       browser,
       // Prevent sub-builds from loading the main vite.config.ts (manualChunks
@@ -46,11 +73,13 @@ export default defineConfig({
       // Also direct all sub-build outputs to dist-extension/.
       scriptViteConfig: {
         configFile: false,
+        plugins: [patchKaspaWasmForBrowser()],
         resolve: { alias: { "../../src": resolve(__dirname, "src") } },
         build: { outDir: resolve(__dirname, "dist-extension") },
       },
       htmlViteConfig: {
         configFile: false,
+        plugins: [patchKaspaWasmForBrowser()],
         resolve: { alias: { "../../src": resolve(__dirname, "src") } },
         build: { outDir: resolve(__dirname, "dist-extension") },
       },

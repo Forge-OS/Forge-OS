@@ -1,11 +1,11 @@
-// Forge-OS Page Provider — content script running in MAIN world on forgeos.xyz
+// Forge-OS Page Provider — content script running in MAIN world on forge-os.xyz
 //
 // Injects window.forgeos so page JavaScript can call connect() / signMessage().
 // Communicates with site-bridge.ts (isolated world) via window.postMessage.
 //
-// SECURITY: phrase is read from localStorage only within this script's scope
-// and is used only for local signing — it is never sent over postMessage or
-// to any external service.
+// NOTE: All signing routes through the extension vault bridge (FORGEOS_SIGN).
+// kaspa-wasm is NOT imported here — it is too large for a MAIN-world content
+// script and Chrome MV3 CSP blocks WASM instantiation in content scripts.
 
 const WALLET_KEY = "forgeos.managed.wallet.v1";
 
@@ -21,14 +21,19 @@ const pending = new Map<string, Pending>();
 
 window.addEventListener("message", (ev) => {
   if (ev.source !== window) return;
-  const msg = ev.data as BridgeMsg;
+  const msg = ev.data as BridgeMsg & { result?: unknown; error?: unknown };
   if (!msg?.[S]) return;
+  if (typeof msg.requestId !== "string") return;
 
-  const req = pending.get(msg.requestId ?? "");
+  // Ignore outbound request messages posted by this provider/site bridge.
+  // We only want response-shaped messages that include result/error fields.
+  if (!("result" in msg) && !("error" in msg)) return;
+
+  const req = pending.get(msg.requestId);
   if (!req) return;
 
   clearTimeout(req.timer);
-  pending.delete(msg.requestId!);
+  pending.delete(msg.requestId);
 
   if (msg.error) {
     req.reject(new Error(String(msg.error)));
@@ -51,27 +56,6 @@ function bridgeRequest(type: string, extra?: Record<string, unknown>): Promise<a
   });
 }
 
-// ── kaspa-wasm signing ───────────────────────────────────────────────────────
-
-async function signWithKaspa(phrase: string, message: string): Promise<string> {
-  // kaspa-wasm is bundled with the extension — safe to import dynamically.
-  const kaspa = await import("kaspa-wasm");
-  const initFn = (kaspa as any).default ?? (kaspa as any).init;
-  if (typeof initFn === "function") { try { await initFn(); } catch {} }
-
-  const { Mnemonic, XPrv, XPrivateKey } = kaspa;
-  const mnemonic  = new Mnemonic(phrase);
-  const seed      = mnemonic.toSeed();
-  const masterXPrv = new XPrv(seed);
-  const xprvStr   = masterXPrv.intoString("kprv");
-  const xprvKey   = new XPrivateKey(xprvStr, false, BigInt(0));
-  const privKey   = xprvKey.receiveKey(0); // m/44'/111'/0'/0/0
-
-  const bytes = new TextEncoder().encode(message);
-  const sig   = privKey.sign(bytes);
-  return Array.from(sig as Uint8Array, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 // ── Provider factory ─────────────────────────────────────────────────────────
 
 function createProvider() {
@@ -92,16 +76,8 @@ function createProvider() {
       return bridgeRequest("FORGEOS_CONNECT");
     },
 
-    /** Sign a message. Uses local key derivation for managed wallets. */
+    /** Sign a message via the extension vault (secure path). */
     async signMessage(message: string): Promise<string> {
-      try {
-        const raw = localStorage.getItem(WALLET_KEY);
-        if (raw) {
-          const w = JSON.parse(raw);
-          if (w?.phrase) return signWithKaspa(w.phrase, message);
-        }
-      } catch {}
-      // Extension vault signing path
       return bridgeRequest("FORGEOS_SIGN", { message });
     },
 

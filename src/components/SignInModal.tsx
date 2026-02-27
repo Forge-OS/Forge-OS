@@ -11,7 +11,7 @@
 
 import { useState } from "react";
 import { C, mono } from "../tokens";
-import { isKaspaAddress, shortAddr } from "../helpers";
+import { isKaspaAddress } from "../helpers";
 import { ALLOWED_ADDRESS_PREFIXES, DEFAULT_NETWORK } from "../constants";
 import { WalletAdapter } from "../wallet/WalletAdapter";
 import { WalletCreator } from "./WalletCreator";
@@ -53,67 +53,30 @@ interface Props {
   onClose: () => void;
 }
 
-// ── Wallet logo SVGs ──────────────────────────────────────────────────────────
+// ── Wallet logo images ────────────────────────────────────────────────────────
+
+const logoStyle: React.CSSProperties = {
+  width: 28, height: 28, borderRadius: 6,
+  display: "block", objectFit: "cover" as const,
+};
 
 function ForgeOSLogo() {
-  return (
-    <img src="/forgeos-icon.svg" width="28" height="28"
-      style={{ borderRadius: 6, display: "block", objectFit: "contain" }} alt="" />
-  );
+  return <img src="/forge-os-icon3.png" style={logoStyle} alt="" />;
 }
-
 function KaswareLogo() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-      <rect width="32" height="32" rx="7" fill="#051A0F"/>
-      <path d="M16 4.5L26.5 10.5V21.5L16 27.5L5.5 21.5V10.5Z" stroke="#00C67D" strokeWidth="1.5" fill="none"/>
-      <path d="M12.5 11.5V20.5M12.5 16L19.5 11.5M12.5 16L19.5 20.5" stroke="#00C67D" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  );
+  return <img src="/wallets/kasware.png" style={logoStyle} alt="" />;
 }
-
 function KastleLogo() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-      <rect width="32" height="32" rx="7" fill="#0E0820"/>
-      <path d="M7 23V14H10V10H12V14H14V10H18V14H20V10H22V14H25V23H7Z" stroke="#8B5CF6" strokeWidth="1.5" strokeLinejoin="round" fill="none"/>
-      <rect x="13.5" y="18" width="5" height="5" stroke="#8B5CF6" strokeWidth="1" fill="none"/>
-    </svg>
-  );
+  return <img src="/wallets/kastle.svg" style={{ ...logoStyle, objectFit: "contain" as const }} alt="" />;
 }
-
 function KaspiumLogo() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-      <rect width="32" height="32" rx="7" fill="#051814"/>
-      <rect x="10" y="5" width="12" height="22" rx="2" stroke="#39DDB6" strokeWidth="1.5" fill="none"/>
-      <rect x="14" y="23" width="4" height="1.5" rx="0.75" fill="#39DDB6"/>
-      <path d="M14.5 12.5V19.5M14.5 16L18.5 13.5M14.5 16L18.5 18.5" stroke="#39DDB6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  );
+  return <img src="/wallets/kaspium.png" style={logoStyle} alt="" />;
 }
-
 function TangemLogo() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-      <rect width="32" height="32" rx="7" fill="#111111"/>
-      <rect x="4" y="10" width="24" height="14" rx="2" stroke="#E8E8E8" strokeWidth="1.5" fill="none"/>
-      <rect x="4" y="14" width="24" height="3" fill="#E8E8E820"/>
-      <rect x="7" y="18.5" width="5.5" height="3" rx="0.5" fill="none" stroke="#E8E8E8" strokeWidth="1"/>
-      <path d="M20 17.5C21.1 17.5 22 16.6 22 15.5" stroke="#E8E8E8" strokeWidth="1" strokeLinecap="round"/>
-      <path d="M18.5 18.5C20.3 18.5 21.8 17.2 22.5 15.5" stroke="#E8E8E8" strokeWidth="1" strokeLinecap="round"/>
-    </svg>
-  );
+  return <img src="/wallets/tangem.webp" style={logoStyle} alt="" />;
 }
-
 function OneKeyLogo() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-      <rect width="32" height="32" rx="7" fill="#080C1A"/>
-      <circle cx="12.5" cy="15" r="5" stroke="#0085FF" strokeWidth="1.5" fill="none"/>
-      <path d="M17.5 15H28M24 15V18.5M27 15V17.5" stroke="#0085FF" strokeWidth="1.5" strokeLinecap="round"/>
-    </svg>
-  );
+  return <img src="/wallets/onekey.png" style={logoStyle} alt="" />;
 }
 
 const WALLET_LOGOS: Record<string, () => JSX.Element> = {
@@ -263,7 +226,7 @@ export function SignInModal({ onSignIn, onClose }: Props) {
     try {
       let session: any;
       if (selected.id === "kaspium") {
-        session = await WalletAdapter.connectKaspium(addr);
+        session = WalletAdapter.connectKaspium(addr);
       } else {
         session = await WalletAdapter.connectHardwareBridge(
           selected.id as "tangem" | "onekey",
@@ -668,7 +631,7 @@ export function SignInModal({ onSignIn, onClose }: Props) {
                   </div>
 
                   <div style={{ fontSize: 8, color: C.muted, lineHeight: 1.5 }}>
-                    ✓ Domain-bound — this message only works on forgeos.xyz.<br />
+                    ✓ Domain-bound — this message only works on forge-os.xyz.<br />
                     ✓ No transaction — signing a message has no gas fee.<br />
                     ✓ One-time nonce — prevents replay attacks.
                   </div>

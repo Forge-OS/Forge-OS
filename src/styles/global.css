@@ -4,6 +4,19 @@
   --forge-bg: #05070a;
   --forge-grid: rgba(143, 160, 181, 0.06);
   --forge-accent: #39ddb6;
+  --forge-ui-scale: 1;
+}
+
+@media (min-width: 900px) {
+  :root {
+    --forge-ui-scale: 1.1;
+  }
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --forge-ui-scale: 1.16;
+  }
 }
 
 * {
@@ -45,6 +58,24 @@ body {
   isolation: isolate;
   overflow: hidden;
   overflow: clip;
+}
+
+.forge-ui-scale {
+  transform-origin: top center;
+}
+
+@supports (zoom: 1) {
+  .forge-ui-scale {
+    zoom: var(--forge-ui-scale);
+  }
+}
+
+@supports not (zoom: 1) {
+  .forge-ui-scale {
+    transform: scale(var(--forge-ui-scale));
+    width: calc(100% / var(--forge-ui-scale));
+    margin-inline: auto;
+  }
 }
 
 /* PWA standalone mode - ensure proper background for title bar area */

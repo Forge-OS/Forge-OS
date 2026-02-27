@@ -24,6 +24,119 @@ function setWindowKastle(kastle: any) {
   };
 }
 
+function setWindowForgeOSBridge(opts?: {
+  connectResult?: { address: string; network: string } | null;
+  signResult?: string | null;
+}) {
+  const listeners = new Set<(event: any) => void>();
+  const connectResult =
+    opts?.connectResult ??
+    { address: "kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85", network: "mainnet" };
+  const signResult = opts?.signResult ?? "sig_bridge_mock";
+
+  const windowMock: any = {
+    kasware: undefined,
+    kastle: undefined,
+    forgeos: undefined,
+    location: { href: "" },
+    prompt: vi.fn(),
+    localStorage: {
+      getItem: vi.fn().mockReturnValue(null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    },
+    addEventListener: vi.fn((type: string, fn: (event: any) => void) => {
+      if (type === "message") listeners.add(fn);
+    }),
+    removeEventListener: vi.fn((type: string, fn: (event: any) => void) => {
+      if (type === "message") listeners.delete(fn);
+    }),
+    dispatchEvent: vi.fn(),
+    setInterval,
+    clearInterval,
+    setTimeout,
+    clearTimeout,
+  };
+
+  windowMock.postMessage = vi.fn((payload: any) => {
+    if (!payload?.__forgeos__) return;
+    const requestId = payload.requestId;
+    const respond = (response: Record<string, unknown>) => {
+      const event = { source: windowMock, data: response };
+      listeners.forEach((fn) => fn(event));
+    };
+
+    if (payload.type === "FORGEOS_BRIDGE_PING") {
+      respond({
+        __forgeos__: true,
+        type: "FORGEOS_BRIDGE_PONG",
+        requestId,
+        result: { bridgeReady: true },
+      });
+      return;
+    }
+
+    if (payload.type === "FORGEOS_CONNECT") {
+      respond({
+        __forgeos__: true,
+        type: "FORGEOS_CONNECT_RESULT",
+        requestId,
+        result: connectResult,
+      });
+      return;
+    }
+
+    if (payload.type === "FORGEOS_SIGN") {
+      respond({
+        __forgeos__: true,
+        type: "FORGEOS_SIGN_RESULT",
+        requestId,
+        result: signResult,
+      });
+    }
+  });
+
+  (globalThis as any).window = windowMock;
+  return windowMock;
+}
+
+function setWindowForgeOSNoBridge(opts?: { managedWalletJson?: string | null; providerInjected?: boolean }) {
+  const listeners = new Set<(event: any) => void>();
+  const managedWalletJson = opts?.managedWalletJson ?? null;
+  const providerInjected = opts?.providerInjected === true;
+
+  const windowMock: any = {
+    kasware: undefined,
+    kastle: undefined,
+    forgeos: providerInjected ? { isForgeOS: true, connect: vi.fn(), signMessage: vi.fn() } : undefined,
+    location: { href: "" },
+    prompt: vi.fn(),
+    localStorage: {
+      getItem: vi.fn().mockImplementation((key: string) => {
+        if (key === "forgeos.managed.wallet.v1") return managedWalletJson;
+        return null;
+      }),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    },
+    addEventListener: vi.fn((type: string, fn: (event: any) => void) => {
+      if (type === "message") listeners.add(fn);
+    }),
+    removeEventListener: vi.fn((type: string, fn: (event: any) => void) => {
+      if (type === "message") listeners.delete(fn);
+    }),
+    dispatchEvent: vi.fn(),
+    setInterval,
+    clearInterval,
+    setTimeout,
+    clearTimeout,
+    postMessage: vi.fn(),
+  };
+
+  (globalThis as any).window = windowMock;
+  return windowMock;
+}
+
 
 
 describe('WalletAdapter', () => {
@@ -104,6 +217,61 @@ describe('WalletAdapter', () => {
     expect(session.provider).toBe('kastle');
     expect(session.network).toBe('mainnet');
     expect(session.address).toMatch(/^kaspa:/);
+  });
+
+  it('connectForgeOS uses site bridge fallback when injected provider is unavailable', async () => {
+    const windowMock = setWindowForgeOSBridge();
+    const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
+    const session = await WalletAdapter.connectForgeOS();
+    expect(session.provider).toBe('forgeos');
+    expect(session.network).toBe('mainnet');
+    expect(session.address).toMatch(/^kaspa:/);
+    expect(windowMock.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ __forgeos__: true, type: 'FORGEOS_BRIDGE_PING' }),
+      '*'
+    );
+    expect(windowMock.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ __forgeos__: true, type: 'FORGEOS_CONNECT' }),
+      '*'
+    );
+  });
+
+  it('signMessageForgeOS uses site bridge fallback when injected provider is unavailable', async () => {
+    const windowMock = setWindowForgeOSBridge({ signResult: 'bridge_signature_123' });
+    const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
+    const signature = await WalletAdapter.signMessageForgeOS('hello kaspa');
+    expect(signature).toBe('bridge_signature_123');
+    expect(windowMock.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ __forgeos__: true, type: 'FORGEOS_SIGN', message: 'hello kaspa' }),
+      '*'
+    );
+  });
+
+  it('probeForgeOSBridgeStatus reports bridge reachability for content-script transport', async () => {
+    setWindowForgeOSBridge();
+    const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
+    const status = await WalletAdapter.probeForgeOSBridgeStatus(400);
+    expect(status.providerInjected).toBe(false);
+    expect(status.bridgeReachable).toBe(true);
+    expect(status.managedWalletPresent).toBe(false);
+    expect(status.transport).toBe('bridge');
+  });
+
+  it('probeForgeOSBridgeStatus reports managed fallback when provider and bridge are unavailable', async () => {
+    setWindowForgeOSNoBridge({
+      managedWalletJson: JSON.stringify({
+        phrase: 'word '.repeat(12).trim(),
+        address: 'kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85',
+        network: 'mainnet',
+      }),
+      providerInjected: false,
+    });
+    const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
+    const status = await WalletAdapter.probeForgeOSBridgeStatus(300);
+    expect(status.providerInjected).toBe(false);
+    expect(status.bridgeReachable).toBe(false);
+    expect(status.managedWalletPresent).toBe(true);
+    expect(status.transport).toBe('managed');
   });
 
   it('builds kastle raw multi-output tx via backend tx-builder endpoint when configured', async () => {

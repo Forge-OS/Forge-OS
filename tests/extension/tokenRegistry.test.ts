@@ -7,11 +7,12 @@ import { describe, expect, it } from "vitest";
 // ── DEFAULT_REGISTRY structure ────────────────────────────────────────────────
 
 describe("DEFAULT_REGISTRY", () => {
-  it("contains KAS, USDT, and USDC entries", async () => {
+  it("contains KAS, USDT, USDC, and ZRX entries", async () => {
     const { DEFAULT_REGISTRY } = await import("../../extension/tokens/registry");
     expect(DEFAULT_REGISTRY.tokens.KAS).toBeDefined();
     expect(DEFAULT_REGISTRY.tokens.USDT).toBeDefined();
     expect(DEFAULT_REGISTRY.tokens.USDC).toBeDefined();
+    expect(DEFAULT_REGISTRY.tokens.ZRX).toBeDefined();
   });
 
   it("KAS is enabled with 8 decimals and null assetId (native)", async () => {
@@ -34,12 +35,14 @@ describe("DEFAULT_REGISTRY", () => {
     const { DEFAULT_REGISTRY } = await import("../../extension/tokens/registry");
     expect(DEFAULT_REGISTRY.tokens.USDT.disabledReason).toBeTruthy();
     expect(DEFAULT_REGISTRY.tokens.USDC.disabledReason).toBeTruthy();
+    expect(DEFAULT_REGISTRY.tokens.ZRX.disabledReason).toBeTruthy();
   });
 
-  it("USDT and USDC have 6 decimals", async () => {
+  it("USDT/USDC have 6 decimals and ZRX has 18 decimals", async () => {
     const { DEFAULT_REGISTRY } = await import("../../extension/tokens/registry");
     expect(DEFAULT_REGISTRY.tokens.USDT.decimals).toBe(6);
     expect(DEFAULT_REGISTRY.tokens.USDC.decimals).toBe(6);
+    expect(DEFAULT_REGISTRY.tokens.ZRX.decimals).toBe(18);
   });
 });
 
@@ -67,6 +70,13 @@ describe("getToken", () => {
     expect(usdc.id).toBe("USDC");
     expect(usdc.symbol).toBe("USDC");
   });
+
+  it("returns ZRX token definition (even when disabled)", async () => {
+    const { getToken } = await import("../../extension/tokens/registry");
+    const zrx = getToken("ZRX");
+    expect(zrx.id).toBe("ZRX");
+    expect(zrx.symbol).toBe("0x");
+  });
 });
 
 // ── isTokenEnabled ─────────────────────────────────────────────────────────────
@@ -86,6 +96,11 @@ describe("isTokenEnabled", () => {
     const { isTokenEnabled } = await import("../../extension/tokens/registry");
     expect(isTokenEnabled("USDC")).toBe(false);
   });
+
+  it("returns false for ZRX until explicit routing support is enabled", async () => {
+    const { isTokenEnabled } = await import("../../extension/tokens/registry");
+    expect(isTokenEnabled("ZRX")).toBe(false);
+  });
 });
 
 // ── getEnabledTokens ───────────────────────────────────────────────────────────
@@ -103,11 +118,12 @@ describe("getEnabledTokens", () => {
     expect(ids).toContain("KAS");
   });
 
-  it("excludes USDT and USDC while STABLES_ENABLED = false", async () => {
+  it("excludes USDT, USDC, and ZRX while disabled", async () => {
     const { getEnabledTokens } = await import("../../extension/tokens/registry");
     const ids = getEnabledTokens().map((t) => t.id);
     expect(ids).not.toContain("USDT");
     expect(ids).not.toContain("USDC");
+    expect(ids).not.toContain("ZRX");
   });
 });
 
@@ -121,6 +137,7 @@ describe("getAllTokens", () => {
     expect(ids).toContain("KAS");
     expect(ids).toContain("USDT");
     expect(ids).toContain("USDC");
+    expect(ids).toContain("ZRX");
   });
 
   it("count matches the number of entries in DEFAULT_REGISTRY", async () => {

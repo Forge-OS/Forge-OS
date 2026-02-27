@@ -6,23 +6,18 @@
 import type { PendingTx } from "./types";
 import { getSession } from "../vault/vault";
 import { buildKaspaWasmTx } from "./builder";
+import { loadKaspaWasm } from "../../src/wallet/kaspaWasmLoader";
+import { DEFAULT_KASPA_DERIVATION, normalizeKaspaDerivation } from "../../src/wallet/derivation";
 
 // Lazy-load kaspa-wasm
-async function loadKaspa() {
-  const kaspa = await import("kaspa-wasm");
-  const initFn = (kaspa as Record<string, unknown>).default || (kaspa as Record<string, unknown>).init;
-  if (typeof initFn === "function") {
-    try { await (initFn as () => Promise<void>)(); } catch { /* idempotent */ }
-  }
-  return kaspa;
-}
+const loadKaspa = loadKaspaWasm;
 
 /**
  * Sign a built transaction using the managed wallet's in-memory private key.
  *
  * Steps:
  *  1. Assert session is active (wallet unlocked).
- *  2. Derive private key from mnemonic (BIP44 m/44'/111'/0'/0/0).
+ *  2. Derive private key from mnemonic using vault-persisted derivation metadata.
  *  3. Build kaspa-wasm generator pending transaction.
  *  4. Sign all inputs.
  *  5. Serialise the signed transaction for REST broadcast.
@@ -39,16 +34,27 @@ export async function signTransaction(tx: PendingTx): Promise<PendingTx> {
 
   const kaspa = await loadKaspa();
 
-  // ── Key derivation (BIP44 m/44'/111'/0'/0/0) ─────────────────────────────
+  // ── Key derivation (vault-persisted path/account/chain/index) ─────────────
   const { Mnemonic, XPrv, XPrivateKey } = kaspa as Record<string, unknown> as {
-    Mnemonic: new (phrase: string) => { toSeed: () => Uint8Array };
-    XPrv: new (seed: Uint8Array) => { intoString: (prefix: string) => string };
-    XPrivateKey: new (xprvStr: string, isMultisig: boolean, cosignerIndex: bigint) => {
+    Mnemonic: new (phrase: string) => { toSeed: (password?: string) => string };
+    XPrv: new (seed: string) => {
+      derivePath: (path: string) => unknown;
+      intoString: (prefix: string) => string;
+    };
+    XPrivateKey: new (xprvStr: string, isMultisig: boolean, accountIndex: bigint) => {
       receiveKey: (index: number) => {
         toKeypair: () => {
           privateKey?: unknown;
           toPrivateKey?: () => unknown;
         };
+        toString?: (encoding?: string) => string;
+      };
+      changeKey: (index: number) => {
+        toKeypair: () => {
+          privateKey?: unknown;
+          toPrivateKey?: () => unknown;
+        };
+        toString?: (encoding?: string) => string;
       };
     };
   };
@@ -56,13 +62,26 @@ export async function signTransaction(tx: PendingTx): Promise<PendingTx> {
   let privKeyRef: unknown = null;
 
   try {
+    const derivation = normalizeKaspaDerivation(session.derivation ?? DEFAULT_KASPA_DERIVATION);
     const mnemonic = new Mnemonic(session.mnemonic);
-    const seed = mnemonic.toSeed();
+    const seed = mnemonic.toSeed(session.mnemonicPassphrase || undefined);
     const masterXPrv = new XPrv(seed);
-    const xprvStr = masterXPrv.intoString("kprv");
-    const xprvKey = new XPrivateKey(xprvStr, false, BigInt(0));
-    const receiveKey = xprvKey.receiveKey(0);
-    const keypair = receiveKey.toKeypair();
+    let accountRootXPrv = masterXPrv;
+    try {
+      accountRootXPrv = masterXPrv.derivePath(derivation.path) as typeof masterXPrv;
+    } catch (err) {
+      if (derivation.path.startsWith("m/")) {
+        accountRootXPrv = masterXPrv.derivePath(derivation.path.slice(2)) as typeof masterXPrv;
+      } else {
+        throw err;
+      }
+    }
+    const xprvStr = accountRootXPrv.intoString("kprv");
+    const xprvKey = new XPrivateKey(xprvStr, false, BigInt(derivation.account));
+    const pathKey = derivation.chain === 1
+      ? xprvKey.changeKey(derivation.index)
+      : xprvKey.receiveKey(derivation.index);
+    const keypair = pathKey.toKeypair();
 
     // Get PrivateKey instance for Generator.sign()
     // kaspa-wasm ≥ 0.13.0 exposes it via keypair.privateKey or keypair.toPrivateKey()
@@ -77,8 +96,8 @@ export async function signTransaction(tx: PendingTx): Promise<PendingTx> {
       const PrivateKey = (kaspa as Record<string, unknown>).PrivateKey as
         | (new (keyHex: string) => unknown)
         | undefined;
-      const rawKeyStr = typeof (receiveKey as Record<string, unknown>).toString === "function"
-        ? (receiveKey as Record<string, unknown>).toString("hex")
+      const rawKeyStr = typeof (pathKey as Record<string, unknown>).toString === "function"
+        ? (pathKey as Record<string, unknown>).toString("hex")
         : null;
       if (PrivateKey && rawKeyStr) {
         privKeyRef = new PrivateKey(rawKeyStr as string);

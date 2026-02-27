@@ -1,5 +1,5 @@
 /// <reference path="../chrome.d.ts" />
-// Forge-OS Site Bridge — isolated-world content script injected on forgeos.xyz
+// Forge-OS Site Bridge — isolated-world content script injected on forge-os.xyz
 //
 // Responsibilities:
 //  1. SYNC: Forward sanitised wallet metadata (address + network, NO phrase) to
@@ -9,13 +9,13 @@
 //
 // SECURITY:
 //  • phrase is never forwarded — sanitiseWallet strips it before sync.
-//  • signing happens in page-provider.ts (MAIN world) using the phrase from
-//    localStorage within the page context; it never crosses this bridge.
+//  • signing approval is handled in the extension popup (vault session only).
 //  • This script runs in the extension's isolated world (has chrome.runtime).
 //    page-provider.ts runs in MAIN world (no chrome.runtime access).
 
 // export {} makes this a module, preventing global variable collisions with
 // other extension content scripts that also declare top-level const names.
+import { emptyAgentsSnapshot, sanitizeAgentsSnapshot } from "../shared/agentSync";
 export {};
 
 const AGENTS_KEY = "forgeos.session.agents.v2";
@@ -39,15 +39,17 @@ function sanitiseWallet(raw: string | null): string | null {
   } catch { return null; }
 }
 
+function sanitiseAgents(raw: unknown): { json: string; count: number } {
+  return sanitizeAgentsSnapshot(raw) ?? emptyAgentsSnapshot();
+}
+
 // ── Metadata sync to background ───────────────────────────────────────────────
 
 function sync(): void {
   try {
-    const agents = localStorage.getItem(AGENTS_KEY) ?? null;
+    const agents = sanitiseAgents(localStorage.getItem(AGENTS_KEY));
     const wallet = sanitiseWallet(localStorage.getItem(WALLET_KEY));
-    if (agents || wallet) {
-      chrome.runtime.sendMessage({ type: "FORGEOS_SYNC", agents, wallet }).catch(() => {});
-    }
+    chrome.runtime.sendMessage({ type: "FORGEOS_SYNC", agents: agents.json, wallet }).catch(() => {});
   } catch { /* content script must never throw */ }
 }
 
@@ -66,6 +68,32 @@ window.addEventListener("message", (ev) => {
   const msg = ev.data as Record<string, any>;
   if (!msg?.[S]) return;
 
+  // Lightweight bridge heartbeat for web-app fallback detection.
+  if (msg.type === "FORGEOS_BRIDGE_PING") {
+    const requestId = typeof msg.requestId === "string" ? msg.requestId : "";
+    window.postMessage({
+      [S]: true,
+      type: "FORGEOS_BRIDGE_PONG",
+      requestId,
+      result: {
+        bridgeReady: true,
+        transport: "content-script",
+      },
+    }, "*");
+    return;
+  }
+
+  if (msg.type === "FORGEOS_AGENT_SNAPSHOT") {
+    const agents = sanitiseAgents(msg.agents);
+    chrome.runtime.sendMessage({
+      type: "FORGEOS_SYNC_AGENTS",
+      agents: agents.json,
+      source: "push",
+      updatedAt: Date.now(),
+    }).catch(() => {});
+    return;
+  }
+
   // Just open popup (no connect flow)
   if (msg.type === "FORGEOS_OPEN_POPUP") {
     chrome.runtime.sendMessage({ type: "FORGEOS_OPEN_POPUP" }).catch(() => {});
@@ -83,19 +111,26 @@ window.addEventListener("message", (ev) => {
 
   // Extension vault signing — request popup approval
   if (msg.type === "FORGEOS_SIGN") {
-    chrome.runtime.sendMessage(
-      { type: "FORGEOS_SIGN_REQUEST", requestId: msg.requestId, message: msg.message },
-    ).then((response: any) => {
+    const requestId = typeof msg.requestId === "string" ? msg.requestId : "";
+    const message = typeof msg.message === "string" ? msg.message : null;
+    if (!requestId || message === null) {
       window.postMessage({
         [S]: true,
-        requestId: msg.requestId,
-        result: response?.signature ?? null,
-        error: response?.error ?? undefined,
+        requestId,
+        result: null,
+        error: "Invalid sign request",
       }, "*");
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      type: "FORGEOS_OPEN_FOR_SIGN",
+      requestId,
+      message,
     }).catch((err: any) => {
       window.postMessage({
         [S]: true,
-        requestId: msg.requestId,
+        requestId,
         result: null,
         error: err?.message ?? "Signing failed",
       }, "*");
@@ -104,9 +139,9 @@ window.addEventListener("message", (ev) => {
   }
 });
 
-// Push connect result from background back to page
+// Push connect/sign result from background back to page
 chrome.runtime.onMessage.addListener((message: any) => {
-  if (message?.type === "FORGEOS_CONNECT_RESULT") {
+  if (message?.type === "FORGEOS_CONNECT_RESULT" || message?.type === "FORGEOS_SIGN_RESULT") {
     window.postMessage({
       [S]: true,
       requestId: message.requestId,

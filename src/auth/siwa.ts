@@ -36,7 +36,7 @@ export function generateNonce(): string {
 /**
  * Build the canonical SIWA message.
  *
- * Anti-phishing: "Domain: forgeos.xyz" binds the signature to this site.
+ * Anti-phishing: "Domain: forge-os.xyz" binds the signature to this site.
  * A malicious page cannot replay this message because the domain would differ.
  *
  * Nonce: randomly generated per sign-in attempt; prevents replay attacks.
@@ -52,7 +52,7 @@ export function buildSignInMessage(
   return [
     "Sign in to Forge.OS",
     "",
-    "Domain: forgeos.xyz",
+    "Domain: forge-os.xyz",
     `Address: ${address}`,
     `Nonce: ${nonce}`,
     `Issued At: ${issuedAt.toISOString()}`,

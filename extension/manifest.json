@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Forge-OS",
   "version": "1.0.0",
-  "description": "Kaspa AI trading agents — wallet balance, send, receive, and agent monitoring.",
+  "description": "Non-custodial Kaspa wallet — send, receive, DEX & swaps, AI agents. AES-256-GCM + PBKDF2. BIP44. Mainnet, TN10 & TN11.",
   "action": {
     "default_popup": "popup/index.html",
     "default_icon": {
@@ -22,20 +22,36 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://forgeos.xyz/*", "*://www.forgeos.xyz/*", "*://localhost:*/*"],
+      "matches": [
+        "*://forge-os.xyz/*",
+        "*://www.forge-os.xyz/*",
+        "*://forgeos.xyz/*",
+        "*://www.forgeos.xyz/*"
+      ],
       "js": ["content/page-provider.ts"],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["*://forgeos.xyz/*", "*://www.forgeos.xyz/*", "*://localhost:*/*"],
+      "matches": [
+        "*://forge-os.xyz/*",
+        "*://www.forge-os.xyz/*",
+        "*://forgeos.xyz/*",
+        "*://www.forgeos.xyz/*"
+      ],
       "js": ["content/site-bridge.ts"],
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage", "alarms", "clipboardWrite", "tabs"],
+  "permissions": ["storage", "alarms", "clipboardWrite", "tabs", "windows"],
   "host_permissions": [
     "https://api.kaspa.org/*",
-    "https://api-tn10.kaspa.org/*"
+    "https://api-tn10.kaspa.org/*",
+    "https://api-tn11.kaspa.org/*",
+    "https://*.kaspa.org/*",
+    "https://forge-os.xyz/*",
+    "https://www.forge-os.xyz/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ]
 }
