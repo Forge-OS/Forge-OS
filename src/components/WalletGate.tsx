@@ -4,7 +4,6 @@ import { C, mono } from "../tokens";
 import { Badge, Card, Divider } from "./ui";
 import { ForgeAtmosphere } from "./chrome/ForgeAtmosphere";
 import { WalletCreator } from "./WalletCreator";
-import { WalletAdapter } from "../wallet/WalletAdapter";
 
 // Protocol capability blocks
 const PROTOCOL_STACK = [
@@ -60,25 +59,8 @@ const PROTOCOL_STACK = [
 
 export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: any) => void; onSignInClick?: () => void }) {
   const [showCreator, setShowCreator] = useState(false);
-  const [quickConnectBusy, setQuickConnectBusy] = useState<"kasware" | null>(null);
-  const [quickConnectError, setQuickConnectError] = useState<string | null>(null);
-
-  const connectKaswareQuick = async () => {
-    setQuickConnectError(null);
-    setQuickConnectBusy("kasware");
-    try {
-      const session = await WalletAdapter.connectKasware();
-      onConnect(session);
-    } catch (err: any) {
-      const message = String(err?.message || err || "Kasware connection failed.");
-      setQuickConnectError(message);
-    } finally {
-      setQuickConnectBusy(null);
-    }
-  };
 
   const enterDemoMode = () => {
-    setQuickConnectError(null);
     onConnect({
       address: DEMO_ADDRESS,
       network: DEFAULT_NETWORK,
@@ -250,27 +232,8 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
               CONNECT WALLET →
             </button>
 
-            {/* Quick paths kept for fast testing + power users */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-              <button
-                onClick={connectKaswareQuick}
-                disabled={quickConnectBusy === "kasware"}
-                style={{
-                  width: "100%",
-                  background: "rgba(11,17,24,0.85)",
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 8,
-                  cursor: quickConnectBusy === "kasware" ? "not-allowed" : "pointer",
-                  color: quickConnectBusy === "kasware" ? C.dim : C.text,
-                  fontSize: 10,
-                  ...mono,
-                  fontWeight: 700,
-                  letterSpacing: "0.08em",
-                  padding: "10px 0",
-                }}
-              >
-                {quickConnectBusy === "kasware" ? "CONNECTING…" : "CONNECT KASWARE"}
-              </button>
+            {/* Optional demo path */}
+            <div style={{ marginBottom: 10 }}>
               <button
                 onClick={enterDemoMode}
                 style={{
@@ -290,12 +253,6 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
                 ENTER DEMO MODE
               </button>
             </div>
-
-            {quickConnectError && (
-              <div style={{ fontSize: 9, color: C.danger, lineHeight: 1.5, marginBottom: 10 }}>
-                {quickConnectError}
-              </div>
-            )}
 
             {/* Secondary option — create / import wallet */}
             <button
