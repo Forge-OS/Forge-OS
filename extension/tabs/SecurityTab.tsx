@@ -390,23 +390,6 @@ export function SecurityTab({
             </div>
           </div>
 
-          <button
-            onClick={() => { void togglePersistUnlockSession(); }}
-            disabled={sessionPrefsLoading}
-            style={{
-              ...outlineButton(persistUnlockSessionEnabled ? C.ok : C.dim, true),
-              width: "100%",
-              padding: "8px 10px",
-              color: persistUnlockSessionEnabled ? C.ok : C.dim,
-              textAlign: "left",
-              opacity: sessionPrefsLoading ? 0.7 : 1,
-            }}
-          >
-            {persistUnlockSessionEnabled ? "✓ KEEP UNLOCKED WHEN POPUP CLOSES" : "KEEP UNLOCKED WHEN POPUP CLOSES"}
-          </button>
-          <div style={{ fontSize: 8, color: C.dim, lineHeight: 1.5, marginTop: 6 }}>
-            Stores an unlocked session only in browser session memory; lock manually on shared devices.
-          </div>
         </div>
       )}
 

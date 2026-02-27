@@ -2,12 +2,16 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   ACCUMULATE_ONLY,
   ACCUMULATION_VAULT,
+  ALLOWED_ADDRESS_PREFIXES,
   AGENT_SPLIT,
   AUTO_CYCLE_SECONDS,
   CONF_THRESHOLD,
+  ENFORCE_WALLET_NETWORK,
   EXPLORER,
   FEE_RATE,
   FREE_CYCLES_PER_DAY,
+  KAS_API,
+  KAS_API_FALLBACKS,
   KAS_WS_URL,
   LIVE_EXECUTION_DEFAULT,
   DEFAULT_NETWORK,
@@ -47,6 +51,7 @@ import { EXEC_OPTS, STRATEGY_TEMPLATES, PROFESSIONAL_PRESETS, RISK_OPTS } from "
 import { ActionQueue } from "./ActionQueue";
 import { DashboardRuntimeNotices } from "./DashboardRuntimeNotices";
 import { WalletPanel } from "./WalletPanel";
+import { SwapView } from "../SwapView";
 
 const PerfChart = lazy(() => import("./PerfChart").then((m) => ({ default: m.PerfChart })));
 const AgentOverviewPanel = lazy(() => import("./AgentOverviewPanel").then((m) => ({ default: m.AgentOverviewPanel })));
@@ -715,12 +720,14 @@ const [viewportWidth, setViewportWidth] = useState(
     {k:"overview",l:"OVERVIEW"},
     {k:"portfolio",l:"PORTFOLIO"},
     {k:"wallet",l:"WALLET"},
+    {k:"swap",l:"SWAP"},
     {k:"intelligence",l:"INTELLIGENCE"},
     {k:"analytics",l:"ANALYTICS"},
     {k:"attribution",l:"ATTRIBUTION"},
     {k:"alerts",l:"ALERTS"},
     {k:"queue",l:`QUEUE${pendingCount>0?` (${pendingCount})`:""}`},
     {k:"log",l:"LOG"},
+    {k:"network",l:"NETWORK"},
     {k:"controls",l:"CONTROLS"},
   ];
 
@@ -1561,6 +1568,11 @@ const [viewportWidth, setViewportWidth] = useState(
         />
       )}
       {tab==="wallet" && <WalletPanel agent={agent} wallet={wallet} kasData={kasData} marketHistory={marketHistory} lastDecision={decisions[0] || null}/>}
+      {tab==="swap" && (
+        <div style={{ padding: "clamp(12px, 2vw, 22px) 0 0" }}>
+          <SwapView />
+        </div>
+      )}
 
       {/* ── LOG ── */}
       {tab==="log" && (
@@ -1612,6 +1624,107 @@ const [viewportWidth, setViewportWidth] = useState(
             ))}
           </div>
         </Card>
+      )}
+
+      {/* ── CONTROLS ── */}
+      {tab==="network" && (
+        <div style={{display:"grid", gridTemplateColumns:controlsGridCols, gap:14}}>
+          <Card p={18} style={{gridColumn:"1 / -1"}}>
+            <Label>Kaspa RPC Endpoint Policy</Label>
+            <div style={{fontSize:11, color:C.dim, marginTop:8, marginBottom:10, ...mono}}>
+              Frontend runtime is env-driven for deterministic builds.
+            </div>
+            <div style={{display:"grid", gridTemplateColumns:isTablet ? "1fr" : "1fr 1fr", gap:12}}>
+              <div style={{background:C.s2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px"}}>
+                <div style={{fontSize:10, color:C.dim, marginBottom:4, ...mono}}>PRIMARY RPC</div>
+                <div style={{fontSize:12, color:C.text, lineHeight:1.5, wordBreak:"break-all", ...mono}}>
+                  {KAS_API || "UNSET"}
+                </div>
+              </div>
+              <div style={{background:C.s2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px"}}>
+                <div style={{fontSize:10, color:C.dim, marginBottom:4, ...mono}}>FALLBACK RPCS</div>
+                {KAS_API_FALLBACKS.length > 0 ? (
+                  <div style={{display:"flex", flexDirection:"column", gap:4}}>
+                    {KAS_API_FALLBACKS.map((endpoint) => (
+                      <div key={endpoint} style={{fontSize:11, color:C.text, lineHeight:1.4, wordBreak:"break-all", ...mono}}>
+                        {endpoint}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{fontSize:11, color:C.dim, ...mono}}>None configured</div>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          <Card p={18}>
+            <Label>Live Kaspa Feed</Label>
+            <div style={{display:"flex", flexDirection:"column", gap:8, marginTop:10}}>
+              <div style={{display:"flex", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, paddingBottom:6}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>REST Polling</span>
+                <span style={{fontSize:11, color:liveConnected ? C.ok : C.warn, fontWeight:700, ...mono}}>
+                  {liveConnected ? "LIVE" : "DEGRADED"}
+                </span>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, paddingBottom:6}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>WS Stream</span>
+                <span style={{fontSize:11, color:streamConnected ? C.ok : C.warn, fontWeight:700, ...mono}}>
+                  {KAS_WS_URL ? (streamConnected ? "CONNECTED" : `RETRYING (${streamRetryCount})`) : "DISABLED"}
+                </span>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between"}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>Latest DAA</span>
+                <span style={{fontSize:11, color:C.text, fontWeight:700, ...mono}}>
+                  {kasData?.dag?.daaScore || "—"}
+                </span>
+              </div>
+              {kasDataError && (
+                <div style={{fontSize:11, color:C.danger, lineHeight:1.4, marginTop:2, ...mono}}>
+                  {String(kasDataError)}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card p={18}>
+            <Label>Security Network Guardrails</Label>
+            <div style={{display:"flex", flexDirection:"column", gap:8, marginTop:10}}>
+              <div style={{display:"flex", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, paddingBottom:6}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>Active Network</span>
+                <span style={{fontSize:11, color:C.text, fontWeight:700, ...mono}}>
+                  {NETWORK_LABEL.toUpperCase()}
+                </span>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, paddingBottom:6}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>Wallet Network Enforcement</span>
+                <span style={{fontSize:11, color:ENFORCE_WALLET_NETWORK ? C.ok : C.warn, fontWeight:700, ...mono}}>
+                  {ENFORCE_WALLET_NETWORK ? "ON" : "OFF"}
+                </span>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, paddingBottom:6}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>Accepted Prefixes</span>
+                <span style={{fontSize:11, color:C.text, fontWeight:700, ...mono}}>
+                  {ALLOWED_ADDRESS_PREFIXES.join(", ")}
+                </span>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between"}}>
+                <span style={{fontSize:11, color:C.dim, ...mono}}>Explorer</span>
+                <a href={EXPLORER} target="_blank" rel="noreferrer" style={{fontSize:11, color:C.accent, ...mono}}>
+                  open ↗
+                </a>
+              </div>
+            </div>
+          </Card>
+
+          <Card p={18} style={{gridColumn:"1 / -1"}}>
+            <Label>Operator Notes</Label>
+            <div style={{fontSize:11, color:C.dim, marginTop:8, lineHeight:1.5}}>
+              Configure network/RPC via env vars (`VITE_KAS_API_*`, `VITE_KAS_WS_URL_*`, `VITE_KAS_NETWORK*`) to keep rollout deterministic.
+              For extension-level per-network custom RPC presets, use the extension Security tab.
+            </div>
+          </Card>
+        </div>
       )}
 
       {/* ── CONTROLS ── */}
