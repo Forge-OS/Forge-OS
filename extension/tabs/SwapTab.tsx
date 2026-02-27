@@ -68,7 +68,7 @@ export function SwapTab() {
   const [tokenOut, setTokenOut] = useState<TokenId>("USDC");
   const [amountIn, setAmountIn] = useState("");
   const [slippageBps, setSlippageBps] = useState(SWAP_CONFIG.defaultSlippageBps);
-  const [tokenAddressInput, setTokenAddressInput] = useState("");
+  const [tokenSearch, setTokenSearch] = useState("");
   const [tokenStandard, setTokenStandard] = useState<KaspaTokenStandard>("krc20");
   const [resolvedToken, setResolvedToken] = useState<SwapCustomToken | null>(null);
   const [tokenResolveBusy, setTokenResolveBusy] = useState(false);
@@ -78,6 +78,13 @@ export function SwapTab() {
 
   const isDisabled = !gating.enabled;
   const evmRoute = SWAP_CONFIG.routeSource === "evm_0x";
+  const normalizedTokenSearch = tokenSearch.trim().toLowerCase();
+  const tokenSearchResults = normalizedTokenSearch
+    ? tokens
+      .filter((t) => `${t.symbol} ${t.name} ${t.id}`.toLowerCase().includes(normalizedTokenSearch))
+      .slice(0, 8)
+    : [];
+  const selectedListedTokenOut = tokens.find((t) => t.id === tokenOut) ?? null;
 
   useEffect(() => {
     setSidecarSession(getEvmSidecarSession());
@@ -146,8 +153,10 @@ export function SwapTab() {
     try {
       const network = await getNetwork().catch(() => "mainnet");
       const token = await resolveTokenFromAddress(trimmed, tokenStandard, network);
-      setTokenAddressInput(trimmed);
+      setTokenSearch(trimmed);
       setResolvedToken(token);
+      setTokenOut("USDC");
+      setTokenAddressCopied(false);
       resetQuoteState();
     } catch (err) {
       setResolvedToken(null);
@@ -157,39 +166,11 @@ export function SwapTab() {
     }
   };
 
-  const resolveCustomToken = async () => resolveCustomTokenFromAddress(tokenAddressInput);
-
   const clearResolvedToken = () => {
     setResolvedToken(null);
     setTokenResolveError(null);
     setTokenAddressCopied(false);
     resetQuoteState();
-  };
-
-  const pasteTokenAddress = async () => {
-    setTokenResolveError(null);
-    setError(null);
-    if (!navigator?.clipboard?.readText) {
-      setTokenResolveError("Clipboard read is unavailable in this browser.");
-      return;
-    }
-    setTokenClipboardBusy(true);
-    try {
-      const text = await navigator.clipboard.readText();
-      const trimmed = text.trim();
-      if (!trimmed) {
-        setTokenResolveError("Clipboard is empty.");
-        return;
-      }
-      setTokenAddressInput(trimmed);
-      setResolvedToken(null);
-      setTokenAddressCopied(false);
-      resetQuoteState();
-    } catch (err) {
-      setTokenResolveError(err instanceof Error ? err.message : "Failed to read clipboard.");
-    } finally {
-      setTokenClipboardBusy(false);
-    }
   };
 
   const pasteAndResolveTokenAddress = async () => {
@@ -213,6 +194,40 @@ export function SwapTab() {
     } finally {
       setTokenClipboardBusy(false);
     }
+  };
+
+  const selectListedTokenOut = (id: TokenId) => {
+    setTokenOut(id);
+    setResolvedToken(null);
+    setTokenResolveError(null);
+    setTokenAddressCopied(false);
+    setTokenSearch("");
+    resetQuoteState();
+  };
+
+  const runTokenSearch = async () => {
+    setTokenResolveError(null);
+    setError(null);
+    const trimmed = tokenSearch.trim();
+    if (!trimmed) {
+      setTokenResolveError("Type a token name/symbol or paste a token address.");
+      return;
+    }
+    const lower = trimmed.toLowerCase();
+    const exact = tokens.find((t) => (
+      t.id.toLowerCase() === lower
+      || t.symbol.toLowerCase() === lower
+      || t.name.toLowerCase() === lower
+    ));
+    if (exact) {
+      if (!exact.enabled) {
+        setTokenResolveError(exact.disabledReason ?? `${exact.symbol} is not currently available.`);
+        return;
+      }
+      selectListedTokenOut(exact.id);
+      return;
+    }
+    await resolveCustomTokenFromAddress(trimmed);
   };
 
   const copyResolvedTokenAddress = async () => {
@@ -425,34 +440,48 @@ export function SwapTab() {
         <div style={{ ...sectionKicker, marginBottom: 6 }}>
           YOU RECEIVE (ESTIMATED)
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <select
-            value={tokenOut}
-            onChange={(e) => {
-              setTokenOut(e.target.value as TokenId);
-              resetQuoteState();
-            }}
-            disabled={isDisabled}
-            style={{ ...selectStyle(isDisabled), flex: "0 0 100px" }}
-          >
-            {getAllTokens().map((t) => (
-              <option key={t.id} value={t.id} disabled={!t.enabled}>
-                {t.symbol}{!t.enabled ? " (soon)" : ""}
-              </option>
-            ))}
-          </select>
-          <div style={{
-            ...inputStyle(true), flex: 1,
-            display: "flex", alignItems: "center",
-            color: C.muted, fontSize: 11,
-          }}>
-            —
-          </div>
-        </div>
-
-        <div style={{ ...insetCard(), marginTop: 8, padding: "8px 10px" }}>
+        <div style={{ ...insetCard(), padding: "8px 10px" }}>
           <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.08em", marginBottom: 6 }}>
-            PASTE KRC TOKEN ADDRESS (KRC20 / KRC721)
+            SEARCH TOKEN (NAME / SYMBOL) OR PASTE KRC ADDRESS
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            <input
+              value={tokenSearch}
+              onChange={(e) => {
+                setTokenSearch(e.target.value);
+                if (resolvedToken) {
+                  setResolvedToken(null);
+                  setTokenAddressCopied(false);
+                }
+                setTokenResolveError(null);
+                resetQuoteState();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (!isDisabled && !tokenResolveBusy) {
+                    runTokenSearch().catch(() => {});
+                  }
+                }
+              }}
+              placeholder="Search token or paste address"
+              disabled={isDisabled}
+              style={{ ...inputStyle(isDisabled), flex: 1, padding: "8px 10px", fontSize: 9 }}
+            />
+            <button
+              onClick={pasteAndResolveTokenAddress}
+              disabled={isDisabled || tokenClipboardBusy || tokenResolveBusy}
+              style={{ ...outlineButton(C.dim), padding: "0 10px", fontSize: 8, whiteSpace: "nowrap" }}
+            >
+              {tokenClipboardBusy ? "..." : "PASTE"}
+            </button>
+            <button
+              onClick={() => runTokenSearch()}
+              disabled={isDisabled || tokenResolveBusy}
+              style={{ ...outlineButton(C.accent), padding: "0 10px", fontSize: 8, whiteSpace: "nowrap" }}
+            >
+              {tokenResolveBusy ? "..." : "SEARCH"}
+            </button>
           </div>
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             {(["krc20", "krc721"] as KaspaTokenStandard[]).map((standard) => {
@@ -477,43 +506,62 @@ export function SwapTab() {
               );
             })}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input
-              value={tokenAddressInput}
-              onChange={(e) => {
-                setTokenAddressInput(e.target.value);
-                if (resolvedToken) {
-                  setResolvedToken(null);
-                  setTokenAddressCopied(false);
-                }
-                resetQuoteState();
-              }}
-              placeholder="Paste token address"
-              disabled={isDisabled}
-              style={{ ...inputStyle(isDisabled), flex: 1, padding: "8px 10px", fontSize: 9 }}
-            />
-            <button
-              onClick={pasteAndResolveTokenAddress}
-              disabled={isDisabled || tokenClipboardBusy}
-              style={{ ...outlineButton(C.dim), padding: "0 10px", fontSize: 8, whiteSpace: "nowrap" }}
-            >
-              {tokenClipboardBusy ? "..." : "PASTE+RESOLVE"}
-            </button>
-            <button
-              onClick={pasteTokenAddress}
-              disabled={isDisabled || tokenClipboardBusy}
-              style={{ ...outlineButton(C.dim), padding: "0 10px", fontSize: 8 }}
-            >
-              PASTE
-            </button>
-            <button
-              onClick={resolveCustomToken}
-              disabled={isDisabled || tokenResolveBusy}
-              style={{ ...outlineButton(C.accent), padding: "0 10px", fontSize: 8 }}
-            >
-              {tokenResolveBusy ? "..." : "RESOLVE"}
-            </button>
-          </div>
+
+          {tokenSearchResults.length > 0 && (
+            <div style={{ ...insetCard(), marginTop: 6, padding: "6px 7px" }}>
+              {tokenSearchResults.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => selectListedTokenOut(t.id)}
+                  disabled={!t.enabled}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    background: "none",
+                    border: "none",
+                    color: t.enabled ? C.text : C.dim,
+                    padding: "5px 2px",
+                    fontSize: 8,
+                    cursor: t.enabled ? "pointer" : "not-allowed",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    ...mono,
+                  }}
+                >
+                  <span>{t.symbol} · {t.name}</span>
+                  <span style={{ color: t.enabled ? C.ok : C.warn, fontSize: 7 }}>
+                    {t.enabled ? "AVAILABLE" : "SOON"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!normalizedTokenSearch && (
+            <div style={{ fontSize: 8, color: C.muted, marginTop: 4 }}>
+              Try: KAS, USDC, USDT, or paste a KRC20/KRC721 token address.
+            </div>
+          )}
+
+          {!resolvedToken && selectedListedTokenOut && (
+            <div style={{ ...insetCard(), marginTop: 8, padding: "8px 9px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 9, color: C.text, fontWeight: 700, letterSpacing: "0.06em" }}>
+                    {selectedListedTokenOut.symbol}
+                  </div>
+                  <div style={{ fontSize: 8, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {selectedListedTokenOut.name}
+                  </div>
+                </div>
+                <div style={{ fontSize: 7, color: selectedListedTokenOut.enabled ? C.ok : C.warn, letterSpacing: "0.06em" }}>
+                  {selectedListedTokenOut.enabled ? "SELECTED" : "DISABLED"}
+                </div>
+              </div>
+            </div>
+          )}
+
           {tokenResolveError && (
             <div style={{ fontSize: 8, color: C.danger, marginTop: 6 }}>
               {tokenResolveError}
@@ -684,7 +732,7 @@ export function SwapTab() {
           routeInfo.requiresEvmSigner
             ? "This route requires a dedicated EVM signer (Kaspa signer is isolated)."
             : "Signing domain remains inside Kaspa managed wallet boundaries.",
-          "Use PASTE+RESOLVE (one-click) or manual paste + RESOLVE for KRC20/KRC721 metadata + token image.",
+          "Phantom-style token search: type symbol/name or paste token address in one search bar.",
           "Output preview required before any signature.",
           `Max slippage cap: ${SWAP_CONFIG.maxSlippageBps / 100}%.`,
           "No silent token redirection — destination enforced.",
