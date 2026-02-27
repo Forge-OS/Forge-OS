@@ -29,7 +29,7 @@ export default defineConfig({
         manifest_version: 3,
         name: "Forge-OS",
         version: "1.0.0",
-        description: "Non-custodial Kaspa wallet — send, receive, DEX & swaps, AI agents. AES-256-GCM + PBKDF2. BIP44. Mainnet, TN10 & TN11.",
+        description: "Non-custodial Kaspa wallet — send, receive, DEX & swaps, AI agents. AES-256-GCM + PBKDF2. BIP44. Mainnet, TN10, TN11 & TN12.",
         action: {
           default_popup: "extension/popup/index.html",
           default_icon: { "16": "extension/icons/icon16.png", "48": "extension/icons/icon48.png", "128": "extension/icons/icon128.png" },
@@ -64,6 +64,7 @@ export default defineConfig({
           "https://api.kaspa.org/*",
           "https://api-tn10.kaspa.org/*",
           "https://api-tn11.kaspa.org/*",
+          "https://api-tn12.kaspa.org/*",
           "https://*.kaspa.org/*",
         ],
       }),

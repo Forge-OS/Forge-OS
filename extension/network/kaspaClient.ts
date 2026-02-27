@@ -15,6 +15,8 @@ const DEFAULT_ENDPOINT_POOLS: Record<string, string[]> = {
   // Keep the official TN11 API as the built-in default.
   // Add extra TN11 mirrors via VITE_KASPA_TN11_API_ENDPOINTS when available.
   "testnet-11": ["https://api-tn11.kaspa.org"],
+  // Keep TN12 isolated so operators can tune its endpoint pool independently.
+  "testnet-12": ["https://api-tn12.kaspa.org"],
 };
 
 function parseEndpointPoolEnv(envKey: string, fallback: string[]): string[] {
@@ -32,24 +34,28 @@ export const ENDPOINT_POOLS: Record<string, string[]> = {
   mainnet: parseEndpointPoolEnv("VITE_KASPA_MAINNET_API_ENDPOINTS", DEFAULT_ENDPOINT_POOLS.mainnet),
   "testnet-10": parseEndpointPoolEnv("VITE_KASPA_TN10_API_ENDPOINTS", DEFAULT_ENDPOINT_POOLS["testnet-10"]),
   "testnet-11": parseEndpointPoolEnv("VITE_KASPA_TN11_API_ENDPOINTS", DEFAULT_ENDPOINT_POOLS["testnet-11"]),
+  "testnet-12": parseEndpointPoolEnv("VITE_KASPA_TN12_API_ENDPOINTS", DEFAULT_ENDPOINT_POOLS["testnet-12"]),
 };
 
 const IGRA_ENDPOINT_POOLS: Record<string, string[]> = {
   mainnet: parseEndpointPoolEnv("VITE_KASPA_IGRA_MAINNET_API_ENDPOINTS", []),
   "testnet-10": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN10_API_ENDPOINTS", []),
   "testnet-11": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN11_API_ENDPOINTS", []),
+  "testnet-12": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN12_API_ENDPOINTS", []),
 };
 
 const KASPLEX_ENDPOINT_POOLS: Record<string, string[]> = {
   mainnet: parseEndpointPoolEnv("VITE_KASPA_KASPLEX_MAINNET_API_ENDPOINTS", []),
   "testnet-10": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN10_API_ENDPOINTS", []),
   "testnet-11": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN11_API_ENDPOINTS", []),
+  "testnet-12": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN12_API_ENDPOINTS", []),
 };
 
 export const ENDPOINTS: Record<string, string> = {
   mainnet: ENDPOINT_POOLS.mainnet[0],
   "testnet-10": ENDPOINT_POOLS["testnet-10"][0],
   "testnet-11": ENDPOINT_POOLS["testnet-11"][0],
+  "testnet-12": ENDPOINT_POOLS["testnet-12"][0],
 };
 
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -174,6 +180,7 @@ export function getKaspaEndpointHealth(network?: string): Record<string, KaspaEn
     mainnet: mapNetwork("mainnet"),
     "testnet-10": mapNetwork("testnet-10"),
     "testnet-11": mapNetwork("testnet-11"),
+    "testnet-12": mapNetwork("testnet-12"),
   };
 }
 
@@ -357,6 +364,7 @@ export const NETWORK_BPS: Record<string, number> = {
   mainnet:       10,
   "testnet-10":  10,
   "testnet-11":  32,
+  "testnet-12":  10,
 };
 
 // ── Public methods ────────────────────────────────────────────────────────────
@@ -489,7 +497,7 @@ export async function fetchDagInfo(network = "mainnet"): Promise<KaspaDagInfo | 
 export async function probeKaspaEndpointPool(
   network = "mainnet",
 ): Promise<KaspaEndpointHealthSnapshot[]> {
-  const pool = rankEndpointPool(network);
+  const pool = await resolveRuntimeEndpointPool(network);
 
   await Promise.all(pool.map(async (base) => {
     try {

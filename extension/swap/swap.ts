@@ -63,7 +63,7 @@ function getActiveEvmSession(): EvmSidecarSession | null {
   return isEvmChainAllowed(s.chainId) ? s : null;
 }
 
-const KASPA_NETWORKS = ["mainnet", "testnet-10", "testnet-11"] as const;
+const KASPA_NETWORKS = ["mainnet", "testnet-10", "testnet-11", "testnet-12"] as const;
 const SOMPI_PER_KAS = 100_000_000;
 
 function kasFromSompi(sompi: bigint): number {
@@ -76,7 +76,7 @@ function kasFromSompi(sompi: bigint): number {
 
 async function currentSwapNetwork(): Promise<string> {
   const net = await getNetwork().catch(() => "mainnet");
-  if (net === "mainnet" || net === "testnet-10" || net === "testnet-11") return net;
+  if (net === "mainnet" || net === "testnet-10" || net === "testnet-11" || net === "testnet-12") return net;
   return "mainnet";
 }
 
@@ -161,12 +161,15 @@ export function getSwapGatingStatus(): SwapGatingStatus {
  */
 export function validateSwapRequest(req: SwapRequest): string[] {
   const errors: string[] = [];
+  const customOut = req.customTokenOut ?? null;
+  const usesCustomOut = Boolean(customOut);
+  const routeTokenOut = usesCustomOut ? "USDC" : req.tokenOut;
 
-  if (req.tokenIn === req.tokenOut) {
+  if (!usesCustomOut && req.tokenIn === req.tokenOut) {
     errors.push("Token in and token out must be different.");
   }
 
-  const route = resolveSwapRouteSource(req.tokenIn, req.tokenOut, SWAP_CONFIG.routeSource);
+  const route = resolveSwapRouteSource(req.tokenIn, routeTokenOut, SWAP_CONFIG.routeSource);
   if (!route.allowed && route.reason) {
     errors.push(route.reason);
   }
@@ -175,8 +178,18 @@ export function validateSwapRequest(req: SwapRequest): string[] {
     errors.push(`${req.tokenIn} is not currently available.`);
   }
 
-  if (!isTokenEnabled(req.tokenOut)) {
+  if (!usesCustomOut && !isTokenEnabled(req.tokenOut)) {
     errors.push(`${req.tokenOut} is not currently available.`);
+  }
+
+  if (usesCustomOut) {
+    const address = String(customOut?.address ?? "").trim();
+    if (!address) {
+      errors.push("Custom token address is required.");
+    }
+    if (customOut?.standard !== "krc20" && customOut?.standard !== "krc721") {
+      errors.push("Custom token standard must be KRC20 or KRC721.");
+    }
   }
 
   if (req.amountIn <= 0n) {
@@ -201,6 +214,8 @@ export function validateSwapRequest(req: SwapRequest): string[] {
     if (req.tokenIn !== "KAS") {
       errors.push("Kaspa-native swap currently supports KAS as the input token.");
     }
+  } else if (usesCustomOut) {
+    errors.push("Custom KRC token output requires kaspa-native swap route.");
   }
 
   return errors;
@@ -220,7 +235,8 @@ export async function getSwapQuote(req: SwapRequest): Promise<SwapQuote | null> 
     throw new Error(`SWAP_VALIDATION: ${validationErrors.join("; ")}`);
   }
 
-  const route = resolveSwapRouteSource(req.tokenIn, req.tokenOut, SWAP_CONFIG.routeSource);
+  const routeTokenOut = req.customTokenOut ? "USDC" : req.tokenOut;
+  const route = resolveSwapRouteSource(req.tokenIn, routeTokenOut, SWAP_CONFIG.routeSource);
   if (route.source === "kaspa_native") {
     const endpoint = SWAP_CONFIG.dexEndpoint;
     if (!endpoint) {
@@ -232,11 +248,15 @@ export async function getSwapQuote(req: SwapRequest): Promise<SwapQuote | null> 
     }
     const network = await currentSwapNetwork();
     const walletAddress = withKaspaAddressNetwork(session.address, network);
-    return fetchKaspaNativeQuote(req, {
+    const quote = await fetchKaspaNativeQuote(req, {
       endpoint,
       network,
       walletAddress,
     });
+    return {
+      ...quote,
+      customTokenOut: req.customTokenOut ?? null,
+    };
   }
 
   if (route.source === "evm_0x") {
@@ -283,6 +303,7 @@ export async function getSwapQuote(req: SwapRequest): Promise<SwapQuote | null> 
       },
       allowanceSpender: raw.issues?.allowance?.spender,
       rawQuote: raw,
+      customTokenOut: req.customTokenOut ?? null,
     };
   }
 

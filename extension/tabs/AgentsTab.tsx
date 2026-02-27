@@ -35,6 +35,7 @@ function networkFilterLabel(filter: AgentNetworkFilter, currentNetwork: string):
     return `CURRENT (${networkBadgeLabel(normalized)})`;
   }
   if (filter === "mainnet") return "MAINNET";
+  if (filter === "testnet-12") return "TN12";
   if (filter === "testnet-10") return "TN10";
   if (filter === "testnet-11") return "TN11";
   return "ALL";
@@ -115,7 +116,7 @@ export function AgentsTab({ network }: Props) {
         <div style={sectionCard("default", true)}>
           <div style={{ ...sectionKicker, marginBottom: 7 }}>LIVE AGENT FEED · TESTNET/MAINNET FILTERS</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 7 }}>
-            {(["current", "mainnet", "testnet-10", "testnet-11", "all"] as AgentNetworkFilter[]).map((filter) => {
+            {(["current", "mainnet", "testnet-10", "testnet-11", "testnet-12", "all"] as AgentNetworkFilter[]).map((filter) => {
               const active = filter === networkFilter;
               return (
                 <button
@@ -207,7 +208,7 @@ export function AgentsTab({ network }: Props) {
         </div>
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 7 }}>
-          {(["current", "mainnet", "testnet-10", "testnet-11", "all"] as AgentNetworkFilter[]).map((filter) => {
+          {(["current", "mainnet", "testnet-10", "testnet-11", "testnet-12", "all"] as AgentNetworkFilter[]).map((filter) => {
             const active = filter === networkFilter;
             return (
               <button

@@ -5,12 +5,24 @@
 import type { TokenId } from "../tokens/types";
 
 export type SwapRouteSource = "blocked" | "kaspa_native" | "evm_0x";
+export type KaspaTokenStandard = "krc20" | "krc721";
+
+export interface SwapCustomToken {
+  address: string;
+  standard: KaspaTokenStandard;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoUri: string;
+}
 
 export interface SwapRequest {
   tokenIn: TokenId;
   tokenOut: TokenId;
   amountIn: bigint;       // In token's smallest unit
   slippageBps: number;    // Basis points (50 = 0.5%)
+  /** Optional custom KRC token output resolved from pasted token address. */
+  customTokenOut?: SwapCustomToken | null;
 }
 
 export interface SwapQuote {
@@ -31,6 +43,7 @@ export interface SwapQuote {
   };
   allowanceSpender?: string;
   rawQuote?: unknown;
+  customTokenOut?: SwapCustomToken | null;
 }
 
 export interface SwapConfig {

@@ -141,6 +141,7 @@ function deserialiseTx(raw: Serialisable): PendingTx {
       ...(i as Record<string, unknown>),
       amount: BigInt(i.amount as string),
       blockDaaScore: BigInt(i.blockDaaScore as string),
+      scriptClass: i.scriptClass === "covenant" ? "covenant" : "standard",
     })),
   } as PendingTx;
 }

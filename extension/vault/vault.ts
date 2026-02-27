@@ -215,7 +215,7 @@ export async function vaultExists(): Promise<boolean> {
  * @param mnemonic   BIP39 phrase (plaintext, held only for this call).
  * @param password   User password — never stored; only the derived key is used.
  * @param address    Derived receive address (index 0).
- * @param network    Network identifier ("mainnet" | "testnet-10").
+ * @param network    Network identifier (mainnet / testnet profiles).
  */
 export async function createVault(
   mnemonic: string,

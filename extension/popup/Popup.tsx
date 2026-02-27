@@ -89,8 +89,13 @@ export function Popup() {
   const [dagUpdatedAt, setDagUpdatedAt] = useState<number | null>(null);
   const [feedStatusMessage, setFeedStatusMessage] = useState<string | null>(null);
 
-  const NETWORKS = ["mainnet", "testnet-10", "testnet-11"] as const;
-  const NETWORK_LABELS: Record<string, string> = { mainnet: "MAINNET", "testnet-10": "TN10", "testnet-11": "TN11" };
+  const NETWORKS = ["mainnet", "testnet-10", "testnet-11", "testnet-12"] as const;
+  const NETWORK_LABELS: Record<string, string> = {
+    mainnet: "MAINNET",
+    "testnet-10": "TN10",
+    "testnet-11": "TN11",
+    "testnet-12": "TN12",
+  };
   const BALANCE_FEED_STALE_MS = 45_000;
   const PRICE_FEED_STALE_MS = 45_000;
   const DAG_FEED_STALE_MS = 60_000;

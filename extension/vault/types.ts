@@ -31,7 +31,7 @@ export interface VaultPayload {
   /** Selected derivation metadata for address/signing reconstruction. */
   derivation?: KaspaDerivationMeta;
   address: string;      // Derived receive address (index 0)
-  network: "mainnet" | "testnet-10" | "testnet-11";
+  network: "mainnet" | "testnet-10" | "testnet-11" | "testnet-12";
   derivationPath: string; // legacy: "m/44'/111'/0'"
   addressIndex: number;   // legacy: 0
 }

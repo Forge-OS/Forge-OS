@@ -61,20 +61,6 @@ export function Header({ wallet, onDisconnect }: Props) {
           <span style={{ color: C.accent }}>FORGE</span>
           <span style={{ color: C.text }}>-OS</span>
         </span>
-        <span
-          style={{
-            fontSize: 9,
-            color: C.dim,
-            letterSpacing: "0.08em",
-            ...mono,
-            marginLeft: 4,
-            display: "none",
-            // visible above ~520px
-          }}
-          className="header-tagline"
-        >
-          AI-NATIVE FINANCIAL OS
-        </span>
       </div>
 
       {/* Right side: address chip when authenticated */}

@@ -1,5 +1,5 @@
-export type AgentNetworkId = "mainnet" | "testnet-10" | "testnet-11" | "testnet" | "unknown";
-export type AgentNetworkFilter = "current" | "all" | "mainnet" | "testnet-10" | "testnet-11";
+export type AgentNetworkId = "mainnet" | "testnet-10" | "testnet-11" | "testnet-12" | "testnet" | "unknown";
+export type AgentNetworkFilter = "current" | "all" | "mainnet" | "testnet-10" | "testnet-11" | "testnet-12";
 export type AgentModeFilter = "all" | "bots" | "manual";
 
 export interface AgentViewModel {
@@ -59,6 +59,7 @@ function networkFromAddress(value: unknown): AgentNetworkId | null {
 export function normalizeNetworkId(raw: unknown, fallback: unknown = "unknown"): AgentNetworkId {
   const normalized = String(raw ?? "").trim().toLowerCase().replace(/_/g, "-");
   if (normalized.includes("mainnet") || normalized === "main" || normalized === "livenet") return "mainnet";
+  if (normalized.includes("testnet-12") || normalized === "tn12") return "testnet-12";
   if (normalized.includes("testnet-11") || normalized === "tn11") return "testnet-11";
   if (normalized.includes("testnet-10") || normalized === "tn10") return "testnet-10";
   if (normalized === "testnet" || normalized.startsWith("tn") || normalized.startsWith("testnet")) return "testnet";
@@ -67,6 +68,7 @@ export function normalizeNetworkId(raw: unknown, fallback: unknown = "unknown"):
 
   const fallbackNorm = String(fallback ?? "").trim().toLowerCase().replace(/_/g, "-");
   if (fallbackNorm === "mainnet") return "mainnet";
+  if (fallbackNorm === "testnet-12" || fallbackNorm === "tn12") return "testnet-12";
   if (fallbackNorm === "testnet-10" || fallbackNorm === "tn10") return "testnet-10";
   if (fallbackNorm === "testnet-11" || fallbackNorm === "tn11") return "testnet-11";
   if (fallbackNorm.startsWith("testnet") || fallbackNorm.startsWith("tn")) return "testnet";
@@ -173,14 +175,23 @@ function networkFilterMatches(
 ): boolean {
   if (filter === "all") return true;
   if (filter === "mainnet") return network === "mainnet";
+  if (filter === "testnet-12") return network === "testnet-12" || network === "testnet";
   if (filter === "testnet-10") return network === "testnet-10" || network === "testnet";
   if (filter === "testnet-11") return network === "testnet-11" || network === "testnet";
 
   const current = normalizeNetworkId(currentNetwork, "unknown");
   if (current === "mainnet") return network === "mainnet";
+  if (current === "testnet-12") return network === "testnet-12" || network === "testnet";
   if (current === "testnet-10") return network === "testnet-10" || network === "testnet";
   if (current === "testnet-11") return network === "testnet-11" || network === "testnet";
-  if (current === "testnet") return network === "testnet" || network === "testnet-10" || network === "testnet-11";
+  if (current === "testnet") {
+    return (
+      network === "testnet"
+      || network === "testnet-10"
+      || network === "testnet-11"
+      || network === "testnet-12"
+    );
+  }
   return true;
 }
 
@@ -200,6 +211,7 @@ export function filterAgentViews(
 
 export function networkBadgeLabel(network: AgentNetworkId): string {
   if (network === "mainnet") return "MAINNET";
+  if (network === "testnet-12") return "TN12";
   if (network === "testnet-10") return "TN10";
   if (network === "testnet-11") return "TN11";
   if (network === "testnet") return "TESTNET";

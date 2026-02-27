@@ -255,6 +255,13 @@ export async function fetchKaspaNativeQuote(
     network: args.network,
     walletAddress: args.walletAddress,
   };
+  if (req.customTokenOut) {
+    body.tokenOutAddress = req.customTokenOut.address;
+    body.tokenOutStandard = req.customTokenOut.standard;
+    body.tokenOutSymbol = req.customTokenOut.symbol;
+    body.tokenOutName = req.customTokenOut.name;
+    body.tokenOutDecimals = req.customTokenOut.decimals;
+  }
   const { data } = await fetchJson(url, { method: "POST", body });
   return parseQuoteResponse(data, req, normalizeEndpointBase(args.endpoint), args.network);
 }

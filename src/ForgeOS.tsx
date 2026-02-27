@@ -236,8 +236,7 @@ export default function ForgeOS() {
               <span style={{color:C.accent}}>FORGE</span><span style={{color:C.text}}>-OS</span>
             </div>
           </div>
-          {!isMobile && <div style={{width:1, height:14, background:C.border, margin:"0 4px"}}/>}
-          {!isMobile && <div style={{fontSize:9, color:C.dim, letterSpacing:"0.08em", ...mono}}>AI-NATIVE FINANCIAL OS · KASPA</div>}
+          {!isMobile && <div style={{width:1, height:14, background:"transparent", margin:"0 4px"}}/>}
         </div>
         <div style={{display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:isMobile ? "flex-start" : "flex-end"}}>
           <div style={{display:"flex", alignItems:"center", gap:6, border:`1px solid ${isMainnet ? C.warn : C.ok}50`, background:isMainnet?C.wLow:C.oLow, borderRadius:6, padding:"4px 6px"}}>

@@ -56,6 +56,7 @@ const EXPLORERS: Record<string, string> = {
   mainnet:      "https://explorer.kaspa.org",
   "testnet-10": "https://explorer-tn10.kaspa.org",
   "testnet-11": "https://explorer-tn11.kaspa.org",
+  "testnet-12": "https://explorer-tn12.kaspa.org",
 };
 
 export function WalletTab({
@@ -164,7 +165,13 @@ export function WalletTab({
       setPendingTx(built);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setErrorMsg(msg === "INSUFFICIENT_FUNDS" ? "Insufficient balance including fees." : `Build failed: ${msg}`);
+      setErrorMsg(
+        msg === "INSUFFICIENT_FUNDS"
+          ? "Insufficient balance including fees."
+          : msg === "COVENANT_ONLY_FUNDS"
+            ? "Funds are currently locked in covenant outputs. Standard send only spends standard UTXOs."
+            : `Build failed: ${msg}`,
+      );
       setSendStep("error");
       return;
     }
@@ -267,6 +274,8 @@ export function WalletTab({
   const utxoTotalSompi = utxos.reduce((acc, u) => acc + u.amount, 0n);
   const utxoTotalKas = sompiToKas(utxoTotalSompi);
   const utxoLargestKas = utxos.length ? sompiToKas(utxos[0].amount) : 0;
+  const covenantUtxoCount = utxos.filter((u) => (u.scriptClass ?? "standard") === "covenant").length;
+  const standardUtxoCount = utxos.length - covenantUtxoCount;
   const utxoUpdatedLabel = utxoUpdatedAt
     ? new Date(utxoUpdatedAt).toLocaleTimeString([], { hour12: false })
     : "—";
@@ -417,6 +426,12 @@ export function WalletTab({
           </div>
         </div>
 
+        {covenantUtxoCount > 0 && (
+          <div style={{ ...insetCard(), fontSize: 7, color: C.warn, padding: "8px 10px", marginBottom: 8, lineHeight: 1.45 }}>
+            Covenant outputs detected: {covenantUtxoCount}. Standard send currently uses spendable UTXOs only ({standardUtxoCount} available).
+          </div>
+        )}
+
         {utxoLoading && utxos.length === 0 && (
           <div style={{ ...insetCard(), fontSize: 7, color: C.dim, padding: "9px 10px" }}>
             Fetching UTXOs from {network}…
@@ -447,7 +462,7 @@ export function WalletTab({
                         #{idx + 1} {u.txId.slice(0, 16)}…:{u.outputIndex}
                       </div>
                       <div style={{ fontSize: 6, color: C.muted, marginTop: 2 }}>
-                        DAA {u.blockDaaScore.toString()} {u.isCoinbase ? "· COINBASE" : ""}
+                        DAA {u.blockDaaScore.toString()} {u.isCoinbase ? "· COINBASE" : ""} {(u.scriptClass ?? "standard") === "covenant" ? "· COVENANT" : ""}
                       </div>
                     </div>
                     <div style={{ fontSize: 10, color: C.accent, fontWeight: 700, ...mono }}>

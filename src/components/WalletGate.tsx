@@ -66,9 +66,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
 
       {/* ── FULL-WIDTH CENTERED HERO ── */}
       <div style={{ width: "100%", maxWidth: 860, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "clamp(24px,4vw,48px) clamp(8px,2vw,16px) clamp(20px,3vw,36px)" }}>
-        <div style={{ fontSize: 9, color: C.accent, fontWeight: 700, ...mono, letterSpacing: "0.2em" }}>
-          FORGE-OS // KASPA-NATIVE QUANT STACK
-        </div>
+        <div aria-hidden style={{ height: 12 }} />
         <h1 style={{ font: `700 clamp(26px,4.5vw,52px)/1.1 'IBM Plex Mono',monospace`, letterSpacing: "0.03em", margin: 0, color: C.text, textWrap: "balance" as any }}>
           <span style={{ color: C.accent, textShadow: "0 0 30px rgba(57,221,182,0.55)" }}>KAS / USDC</span>
           <span style={{ color: C.text, fontWeight: 800 }}> AI TRADING</span>

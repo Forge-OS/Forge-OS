@@ -36,6 +36,7 @@ const KAS_API_BY_NETWORK: Record<string, string> = {
   mainnet: "https://api.kaspa.org",
   "testnet-10": "https://api-tn10.kaspa.org",
   "testnet-11": "https://api-tn11.kaspa.org",
+  "testnet-12": "https://api-tn12.kaspa.org",
 };
 const KAS_SOMPI = 1e8;
 const BALANCE_ALARM = "forgeos-balance-poll";

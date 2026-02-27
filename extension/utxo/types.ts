@@ -3,6 +3,13 @@
 
 export const SOMPI_PER_KAS = 100_000_000n;
 
+/**
+ * Script classification used by send-path policy.
+ * - standard: normal pay-to-pubkey outputs this wallet can spend directly.
+ * - covenant: script-constrained outputs that require covenant-specific spend logic.
+ */
+export type UtxoScriptClass = "standard" | "covenant";
+
 export interface Utxo {
   txId: string;
   outputIndex: number;
@@ -10,6 +17,7 @@ export interface Utxo {
   amount: bigint;           // sompi
   scriptPublicKey: string;  // hex-encoded script
   scriptVersion: number;
+  scriptClass: UtxoScriptClass;
   blockDaaScore: bigint;
   isCoinbase: boolean;
 }

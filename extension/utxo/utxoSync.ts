@@ -15,6 +15,24 @@ const STALE_THRESHOLD_MS = 30_000;
 // ── In-memory UTXO cache ──────────────────────────────────────────────────────
 const _cache = new Map<string, UtxoSet>();
 
+function normalizeScriptHex(scriptPublicKey: string): string {
+  return String(scriptPublicKey || "").trim().toLowerCase();
+}
+
+/**
+ * Kaspa standard receive outputs are currently version=0 P2PK scripts:
+ *   0x20 <32-byte-pubkey> 0xac
+ */
+function isStandardP2pkScript(scriptVersion: number, scriptPublicKey: string): boolean {
+  if (scriptVersion !== 0) return false;
+  const normalized = normalizeScriptHex(scriptPublicKey);
+  return /^20[0-9a-f]{64}ac$/.test(normalized);
+}
+
+function classifyScript(scriptVersion: number, scriptPublicKey: string): "standard" | "covenant" {
+  return isStandardP2pkScript(scriptVersion, scriptPublicKey) ? "standard" : "covenant";
+}
+
 /** Return cached UTXO set, or null if missing / stale. */
 export function getCachedUtxoSet(address: string): UtxoSet | null {
   const cached = _cache.get(address.toLowerCase());
@@ -31,13 +49,16 @@ export function invalidateUtxoCache(address: string): void {
 // ── Fetch + parse ─────────────────────────────────────────────────────────────
 
 function parseRawUtxo(raw: KaspaUtxoResponse): Utxo {
+  const scriptVersion = raw.utxoEntry.scriptPublicKey.version;
+  const scriptPublicKey = raw.utxoEntry.scriptPublicKey.scriptPublicKey;
   return {
     txId: raw.outpoint.transactionId,
     outputIndex: raw.outpoint.index,
     address: raw.address,
     amount: BigInt(raw.utxoEntry.amount),
-    scriptPublicKey: raw.utxoEntry.scriptPublicKey.scriptPublicKey,
-    scriptVersion: raw.utxoEntry.scriptPublicKey.version,
+    scriptPublicKey,
+    scriptVersion,
+    scriptClass: classifyScript(scriptVersion, scriptPublicKey),
     blockDaaScore: BigInt(raw.utxoEntry.blockDaaScore),
     isCoinbase: raw.utxoEntry.isCoinbase,
   };
@@ -48,7 +69,7 @@ function parseRawUtxo(raw: KaspaUtxoResponse): Utxo {
  * Also reconciles any in-flight pending transactions passed in.
  *
  * @param address         Kaspa address to sync.
- * @param network         Network identifier ("mainnet" | "testnet-10").
+ * @param network         Network identifier (mainnet / testnet profiles).
  * @param pendingInputs   Set of "txId:outputIndex" strings locked by pending txs.
  * @param pendingOutbound Sum of pending outbound amounts in sompi.
  * @returns               Updated UtxoSet (also stored in cache).
@@ -109,8 +130,9 @@ export function selectUtxos(
   feeSompi: bigint,
   lockedKeys: Set<string> = new Set(),
 ): { selected: Utxo[]; total: bigint } {
-  const available = utxos
-    .filter((u) => !lockedKeys.has(`${u.txId}:${u.outputIndex}`))
+  const unlocked = utxos.filter((u) => !lockedKeys.has(`${u.txId}:${u.outputIndex}`));
+  const available = unlocked
+    .filter((u) => (u.scriptClass ?? "standard") === "standard")
     .sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0)); // largest first
 
   const need = targetSompi + feeSompi;
@@ -123,7 +145,13 @@ export function selectUtxos(
     if (total >= need) break;
   }
 
-  if (total < need) throw new Error("INSUFFICIENT_FUNDS");
+  if (total < need) {
+    const unlockedTotal = unlocked.reduce((acc, u) => acc + u.amount, 0n);
+    if (unlockedTotal >= need) {
+      throw new Error("COVENANT_ONLY_FUNDS");
+    }
+    throw new Error("INSUFFICIENT_FUNDS");
+  }
   return { selected, total };
 }
 

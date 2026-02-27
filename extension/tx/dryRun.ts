@@ -10,6 +10,7 @@ const NETWORK_PREFIXES: Record<string, string> = {
   mainnet: "kaspa:",
   "testnet-10": "kaspatest:",
   "testnet-11": "kaspatest:",
+  "testnet-12": "kaspatest:",
 };
 
 /**
@@ -30,6 +31,13 @@ export async function dryRunValidate(tx: PendingTx): Promise<DryRunResult> {
   // ── CHECK 1: UTXO availability ────────────────────────────────────────────
   let utxoSet;
   try {
+    const covenantInputs = tx.inputs.filter((input) => (input.scriptClass ?? "standard") === "covenant");
+    if (covenantInputs.length > 0) {
+      errors.push(
+        `COVENANT_INPUT_UNSUPPORTED: ${covenantInputs.length} covenant UTXO(s) require covenant-aware spend logic`,
+      );
+    }
+
     // Force a fresh fetch to catch concurrent spends
     utxoSet = await getOrSyncUtxos(tx.fromAddress, tx.network);
     const utxoIndex = new Set(

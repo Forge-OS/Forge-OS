@@ -5,7 +5,12 @@
 
 import { useEffect, useState } from "react";
 import { C, mono } from "../../src/tokens";
-import { SWAP_CONFIG, type SwapQuote } from "../swap/types";
+import {
+  SWAP_CONFIG,
+  type KaspaTokenStandard,
+  type SwapCustomToken,
+  type SwapQuote,
+} from "../swap/types";
 import {
   connectEvmSidecarSigner,
   executeSwapQuote,
@@ -19,6 +24,8 @@ import type { TokenId } from "../tokens/types";
 import { clearEvmSidecarSession, getEvmSidecarSession, type EvmSidecarSession } from "../swap/evmSidecar";
 import { listSwapSettlements } from "../swap/settlementStore";
 import type { SwapSettlementRecord } from "../swap/settlement";
+import { getNetwork } from "../shared/storage";
+import { resolveTokenFromAddress } from "../swap/tokenResolver";
 import {
   insetCard,
   outlineButton,
@@ -61,6 +68,11 @@ export function SwapTab() {
   const [tokenOut, setTokenOut] = useState<TokenId>("USDC");
   const [amountIn, setAmountIn] = useState("");
   const [slippageBps, setSlippageBps] = useState(SWAP_CONFIG.defaultSlippageBps);
+  const [tokenAddressInput, setTokenAddressInput] = useState("");
+  const [tokenStandard, setTokenStandard] = useState<KaspaTokenStandard>("krc20");
+  const [resolvedToken, setResolvedToken] = useState<SwapCustomToken | null>(null);
+  const [tokenResolveBusy, setTokenResolveBusy] = useState(false);
+  const [tokenResolveError, setTokenResolveError] = useState<string | null>(null);
 
   const isDisabled = !gating.enabled;
   const evmRoute = SWAP_CONFIG.routeSource === "evm_0x";
@@ -100,6 +112,7 @@ export function SwapTab() {
         tokenOut,
         amountIn: units,
         slippageBps,
+        customTokenOut: resolvedToken,
       });
       if (!q) {
         setError(gating.reason ?? "Swap is currently unavailable.");
@@ -111,6 +124,32 @@ export function SwapTab() {
     } finally {
       setQuoteBusy(false);
     }
+  };
+
+  const resolveCustomToken = async () => {
+    setTokenResolveError(null);
+    setError(null);
+    const trimmed = tokenAddressInput.trim();
+    if (!trimmed) {
+      setTokenResolveError("Paste a token address first.");
+      return;
+    }
+    setTokenResolveBusy(true);
+    try {
+      const network = await getNetwork().catch(() => "mainnet");
+      const token = await resolveTokenFromAddress(trimmed, tokenStandard, network);
+      setResolvedToken(token);
+    } catch (err) {
+      setResolvedToken(null);
+      setTokenResolveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTokenResolveBusy(false);
+    }
+  };
+
+  const clearResolvedToken = () => {
+    setResolvedToken(null);
+    setTokenResolveError(null);
   };
 
   const connectSidecar = async () => {
@@ -317,6 +356,84 @@ export function SwapTab() {
             —
           </div>
         </div>
+
+        <div style={{ ...insetCard(), marginTop: 8, padding: "8px 10px" }}>
+          <div style={{ fontSize: 7, color: C.dim, letterSpacing: "0.08em", marginBottom: 6 }}>
+            PASTE KRC TOKEN ADDRESS (KRC20 / KRC721)
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            {(["krc20", "krc721"] as KaspaTokenStandard[]).map((standard) => {
+              const active = tokenStandard === standard;
+              return (
+                <button
+                  key={standard}
+                  onClick={() => setTokenStandard(standard)}
+                  disabled={isDisabled}
+                  style={{
+                    ...outlineButton(active ? C.accent : C.dim),
+                    flex: 1,
+                    padding: "5px 0",
+                    fontSize: 8,
+                    background: active ? `${C.accent}20` : "rgba(16,25,35,0.45)",
+                    borderColor: active ? `${C.accent}55` : C.border,
+                    color: active ? C.accent : C.dim,
+                  }}
+                >
+                  {standard.toUpperCase()}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              value={tokenAddressInput}
+              onChange={(e) => setTokenAddressInput(e.target.value)}
+              placeholder="Paste token address"
+              disabled={isDisabled}
+              style={{ ...inputStyle(isDisabled), flex: 1, padding: "8px 10px", fontSize: 9 }}
+            />
+            <button
+              onClick={resolveCustomToken}
+              disabled={isDisabled || tokenResolveBusy}
+              style={{ ...outlineButton(C.accent), padding: "0 10px", fontSize: 8 }}
+            >
+              {tokenResolveBusy ? "..." : "RESOLVE"}
+            </button>
+          </div>
+          {tokenResolveError && (
+            <div style={{ fontSize: 7, color: C.danger, marginTop: 6 }}>
+              {tokenResolveError}
+            </div>
+          )}
+
+          {resolvedToken && (
+            <div style={{ ...insetCard(), marginTop: 8, padding: "8px 9px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <img
+                    src={resolvedToken.logoUri}
+                    alt={resolvedToken.symbol}
+                    style={{ width: 26, height: 26, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 9, color: C.text, fontWeight: 700, letterSpacing: "0.06em" }}>
+                      {resolvedToken.symbol} · {resolvedToken.standard.toUpperCase()}
+                    </div>
+                    <div style={{ fontSize: 7, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {resolvedToken.address}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={clearResolvedToken}
+                  style={{ ...outlineButton(C.dim), padding: "4px 7px", fontSize: 7 }}
+                >
+                  CLEAR
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Slippage control */}
@@ -365,6 +482,11 @@ export function SwapTab() {
           {quote && (
             <div style={sectionCard("default", true)}>
               <div style={{ ...sectionKicker, marginBottom: 6 }}>QUOTE PREVIEW</div>
+              {quote.customTokenOut && (
+                <div style={{ fontSize: 8, color: C.text, marginBottom: 6 }}>
+                  Output token: {quote.customTokenOut.symbol} ({quote.customTokenOut.standard.toUpperCase()}) · {quote.customTokenOut.address}
+                </div>
+              )}
               <div style={{ fontSize: 8, color: C.text, marginBottom: 6 }}>
                 Route: {quote.route.join(" -> ")} | Valid ~30s
               </div>
@@ -442,12 +564,13 @@ export function SwapTab() {
           routeInfo.requiresEvmSigner
             ? "This route requires a dedicated EVM signer (Kaspa signer is isolated)."
             : "Signing domain remains inside Kaspa managed wallet boundaries.",
+          "Paste a KRC20/KRC721 token address to resolve live metadata + token image.",
           "Output preview required before any signature.",
           `Max slippage cap: ${SWAP_CONFIG.maxSlippageBps / 100}%.`,
           "No silent token redirection — destination enforced.",
           "Swap routes verified against active network only.",
         ].map((note, i) => (
-          <div key={i} style={{ display: "flex", gap: 6, marginBottom: i < 5 ? 3 : 0 }}>
+          <div key={i} style={{ display: "flex", gap: 6, marginBottom: i < 6 ? 3 : 0 }}>
             <span style={{ color: isDisabled ? C.muted : C.ok, fontSize: 8, flexShrink: 0 }}>•</span>
             <span style={{ fontSize: 7, color: C.muted, lineHeight: 1.4 }}>{note}</span>
           </div>
