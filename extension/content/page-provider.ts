@@ -7,8 +7,6 @@
 // kaspa-wasm is NOT imported here — it is too large for a MAIN-world content
 // script and Chrome MV3 CSP blocks WASM instantiation in content scripts.
 
-const WALLET_KEY = "forgeos.managed.wallet.v1";
-
 // Sentinel field prevents collision with other postMessage traffic.
 const S = "__forgeos__" as const;
 
@@ -63,16 +61,11 @@ function createProvider() {
     isForgeOS: true as const,
     version: "1.0.0",
 
-    /** Connect: fast-path from localStorage managed wallet; fallback via extension popup. */
+    /**
+     * Connect: always route through extension bridge so connect state reflects
+     * real vault session status (including auto-lock) and approval policy.
+     */
     async connect(): Promise<{ address: string; network: string } | null> {
-      try {
-        const raw = localStorage.getItem(WALLET_KEY);
-        if (raw) {
-          const w = JSON.parse(raw);
-          if (w?.address && w?.network) return { address: w.address, network: w.network };
-        }
-      } catch {}
-      // Extension vault path — opens popup for password entry / approval
       return bridgeRequest("FORGEOS_CONNECT");
     },
 

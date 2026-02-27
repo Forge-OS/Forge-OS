@@ -96,9 +96,9 @@ function buildOptions(detected: ReturnType<typeof WalletAdapter.detect>): Wallet
       id: "forgeos",
       label: "Forge-OS",
       icon: "⚡",
-      desc: "Your Forge-OS wallet — create or import on this site",
+      desc: "Your Forge-OS wallet — connect approval proves ownership",
       detected: true,  // Always show — works with managed wallet in localStorage
-      supportsSign: true,
+      supportsSign: false, // Connect approval (extension popup) is sufficient proof; no second sign popup
     },
     {
       id: "kasware",

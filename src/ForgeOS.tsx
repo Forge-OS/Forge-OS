@@ -38,11 +38,11 @@ export default function ForgeOS() {
   });
   const [view, setView] = useState<string>(() => {
     try {
-      if (typeof window === "undefined") return "create";
+      if (typeof window === "undefined") return "dashboard";
       const raw = window.localStorage.getItem(FORGE_AGENTS_KEY);
       if (raw) { const p = JSON.parse(raw); if (Array.isArray(p) && p.length > 0) return "dashboard"; }
     } catch {}
-    return "create";
+    return "dashboard";
   });
   const [editingAgent, setEditingAgent] = useState<any>(null);
   const [switchingNetwork, setSwitchingNetwork] = useState(false);
@@ -52,7 +52,7 @@ export default function ForgeOS() {
 
   const handleConnect = (session: any) => {
     setWallet(session);
-    setView(agents.length > 0 ? "dashboard" : "create");
+    setView("dashboard");
   };
 
   /** Called by SignInModal after connect + SIWA sign completes. */
@@ -60,7 +60,7 @@ export default function ForgeOS() {
     setSiwaSession(session);
     setWallet(walletInfo);
     setShowSignIn(false);
-    setView(agents.length > 0 ? "dashboard" : "create");
+    setView("dashboard");
   };
 
   const handleDisconnect = () => {
@@ -164,7 +164,7 @@ export default function ForgeOS() {
     <>
       <ForgeAtmosphere />
       <div className="forge-ui-scale">
-        <WalletGate onConnect={handleConnect} onSignInClick={() => setShowSignIn(true)} />
+        <WalletGate onConnect={handleConnect} onSignInClick={() => { setShowForgeConnect(false); setShowSignIn(true); }} />
         {showForgeConnect && (
           <ForgeOSConnectModal
             onSignIn={(session, walletInfo) => {
@@ -298,7 +298,7 @@ export default function ForgeOS() {
             setAgents((prev: any[]) => prev.filter((a) => String(a?.agentId) !== String(id)));
             if (String(activeAgentId) === String(id)) {
               setActiveAgentId("");
-              setView("create");
+              setView("dashboard");
             }
           }}
           onEditAgent={(agent: any) => {

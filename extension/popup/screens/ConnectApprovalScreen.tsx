@@ -21,14 +21,15 @@ export function ConnectApprovalScreen({ address, network, origin, onApprove, onR
 
   return (
     <div style={{
-      width: EXTENSION_CONNECT_APPROVAL_BASE_WIDTH,
+      width: "100%",
+      maxWidth: EXTENSION_CONNECT_APPROVAL_BASE_WIDTH,
+      height: "100%",
       minHeight: EXTENSION_CONNECT_APPROVAL_BASE_MIN_HEIGHT,
       ...popupShellBackground(),
       display: "flex",
       flexDirection: "column",
       ...mono,
-      overflowX: "hidden",
-      overflowY: "auto",
+      overflow: "hidden",
       zoom: EXTENSION_POPUP_UI_SCALE,
     }}>
       {/* Header */}
@@ -40,14 +41,22 @@ export function ConnectApprovalScreen({ address, network, origin, onApprove, onR
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "24px 16px", gap: 16 }}>
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        padding: "14px 16px 12px",
+        gap: 12,
+        overflowY: "auto",
+      }}>
         {/* Connection request info */}
         <div style={{ textAlign: "center" }}>
           <div style={{
             width: 52, height: 52, borderRadius: "50%",
             background: `${C.accent}18`, border: `2px solid ${C.accent}40`,
             display: "flex", alignItems: "center", justifyContent: "center",
-            margin: "0 auto 14px",
+            margin: "0 auto 10px",
           }}>
             <img src="../icons/icon48.png" alt="" style={{ width: 30, height: 30, objectFit: "contain" }} />
           </div>
@@ -110,46 +119,46 @@ export function ConnectApprovalScreen({ address, network, origin, onApprove, onR
             <div style={{ fontSize: 8, color: C.dim }}>{network}</div>
           </div>
         </div>
-      </div>
 
-      {/* Action buttons */}
-      <div style={{ padding: "12px 16px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 10 }}>
-        <button
-          onClick={onReject}
-          style={{
-            flex: 1,
-            background: "rgba(33,48,67,0.5)",
-            border: `1px solid ${C.border}`,
-            borderRadius: 8,
-            padding: "10px 0",
-            color: C.dim,
-            fontSize: 10,
-            fontWeight: 700,
-            cursor: "pointer",
-            letterSpacing: "0.08em",
-            ...mono,
-          }}
-        >
-          REJECT
-        </button>
-        <button
-          onClick={onApprove}
-          style={{
-            flex: 2,
-            background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 0",
-            color: "#04110E",
-            fontSize: 11,
-            fontWeight: 700,
-            cursor: "pointer",
-            letterSpacing: "0.08em",
-            ...mono,
-          }}
-        >
-          CONNECT →
-        </button>
+        {/* Action buttons */}
+        <div style={{ display: "flex", gap: 10, marginTop: 2 }}>
+          <button
+            onClick={onReject}
+            style={{
+              flex: 1,
+              background: "rgba(33,48,67,0.5)",
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              padding: "10px 0",
+              color: C.dim,
+              fontSize: 10,
+              fontWeight: 700,
+              cursor: "pointer",
+              letterSpacing: "0.08em",
+              ...mono,
+            }}
+          >
+            REJECT
+          </button>
+          <button
+            onClick={onApprove}
+            style={{
+              flex: 2,
+              background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
+              border: "none",
+              borderRadius: 8,
+              padding: "10px 0",
+              color: "#04110E",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              letterSpacing: "0.08em",
+              ...mono,
+            }}
+          >
+            CONNECT →
+          </button>
+        </div>
       </div>
     </div>
   );

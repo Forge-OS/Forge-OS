@@ -1,7 +1,7 @@
 // ForgeOS-only connect modal — triggered by the header "SIGN IN" button.
 // Immediately attempts to connect the user's Forge-OS wallet:
 //   1. Extension installed (window.forgeos) → extension popup opens, user enters password
-//   2. Managed wallet in localStorage      → auto-connects quickly, closes automatically
+//   2. (Optional) managed-wallet local fallback, when enabled by env policy
 //   3. Neither found                       → shows recovery + create/import prompt
 
 import { useEffect, useState } from "react";
@@ -50,8 +50,8 @@ export function ForgeOSConnectModal({ onSignIn, onOpenFullModal, onClose }: Prop
     };
 
     const tryConnect = async () => {
-      // Always attempt adapter connect first. It waits for extension injection
-      // and falls back to managed wallet if present.
+      // Always attempt adapter connect first. Policy for managed fallback is
+      // controlled in WalletAdapter via VITE_FORGEOS_STRICT_EXTENSION_AUTH_CONNECT.
       setStep("connecting");
       setError(null);
       const extensionWaitHint = window.setTimeout(() => {
@@ -79,6 +79,7 @@ export function ForgeOSConnectModal({ onSignIn, onOpenFullModal, onClose }: Prop
           return;
         }
         if (
+          lower.includes("extension-auth connect is required") ||
           lower.includes("no forge-os wallet") ||
           lower.includes("wallet bridge detected") ||
           lower.includes("bridge detected") ||

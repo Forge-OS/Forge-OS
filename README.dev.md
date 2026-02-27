@@ -182,6 +182,7 @@ Kaspa network:
 - `VITE_KAS_WS_URL`
 - `VITE_KASPIUM_DEEP_LINK_SCHEME`
 - `VITE_KAS_ENFORCE_WALLET_NETWORK`
+- `VITE_FORGEOS_STRICT_EXTENSION_AUTH_CONNECT` (`true` => require extension popup/bridge auth for Forge-OS connect; `false` => allow managed-wallet local fallback when transport is unavailable)
 - `VITE_ACCUMULATE_ONLY`
 - `VITE_TREASURY_ADDRESS_MAINNET`
 - `VITE_TREASURY_ADDRESS_TESTNET`

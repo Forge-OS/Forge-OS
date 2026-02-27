@@ -137,6 +137,21 @@ function getForgeOSProvider(): any | null {
 
 const FORGEOS_BRIDGE_SENTINEL = "__forgeos__" as const;
 const FORGEOS_BRIDGE_TIMEOUT_MS = 120_000;
+const ENV = (import.meta as any)?.env ?? {};
+
+function readBoolEnv(name: string, fallback: boolean): boolean {
+  const raw = ENV?.[name];
+  if (typeof raw !== "string") return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return fallback;
+}
+
+const STRICT_EXTENSION_AUTH_CONNECT = readBoolEnv(
+  "VITE_FORGEOS_STRICT_EXTENSION_AUTH_CONNECT",
+  true,
+);
 
 export type ForgeOSTransportType = "provider" | "bridge" | "managed" | "none";
 
@@ -155,6 +170,8 @@ type ForgeBridgePendingRequest = {
 
 const forgeBridgePending = new Map<string, ForgeBridgePendingRequest>();
 let forgeBridgeListenerAttached = false;
+type ForgeOSConnectResult = { address: string; network: string; provider: "forgeos" };
+let forgeConnectInFlight: Promise<ForgeOSConnectResult> | null = null;
 
 function ensureForgeBridgeListener(): void {
   if (forgeBridgeListenerAttached || typeof window === "undefined") return;
@@ -370,22 +387,40 @@ export const WalletAdapter = {
   },
 
   async connectForgeOS() {
-    // Try extension provider first (page-provider.ts injects window.forgeos)
-    const provider = await resolveForgeOSTransport(3000, 1500);
-    if (provider?.isForgeOS) {
-      const wallet = await provider.connect();
-      if (wallet?.address) {
-        return { address: wallet.address, network: wallet.network, provider: "forgeos" };
+    if (forgeConnectInFlight) return forgeConnectInFlight;
+
+    const connectPromise = (async (): Promise<ForgeOSConnectResult> => {
+      // Try extension provider first (page-provider.ts injects window.forgeos)
+      const provider = await resolveForgeOSTransport(3000, 1500);
+      if (provider?.isForgeOS) {
+        const wallet = await provider.connect();
+        if (wallet?.address) {
+          return { address: wallet.address, network: wallet.network, provider: "forgeos" };
+        }
+      }
+      if (STRICT_EXTENSION_AUTH_CONNECT) {
+        throw new Error(
+          "Forge-OS extension-auth connect is required in this environment. Reload Forge-OS extension, refresh forge-os.xyz, and set extension Site access to allow this domain.",
+        );
+      }
+      // Fallback: read managed wallet directly from localStorage (no extension needed)
+      const managed = loadManagedWallet();
+      if (managed?.address) {
+        return { address: managed.address, network: managed.network, provider: "forgeos" };
+      }
+      throw new Error(
+        "No Forge-OS wallet bridge detected on this tab. Reload Forge-OS extension, refresh forge-os.xyz, and set extension Site access to allow this domain.",
+      );
+    })();
+
+    forgeConnectInFlight = connectPromise;
+    try {
+      return await connectPromise;
+    } finally {
+      if (forgeConnectInFlight === connectPromise) {
+        forgeConnectInFlight = null;
       }
     }
-    // Fallback: read managed wallet directly from localStorage (no extension needed)
-    const managed = loadManagedWallet();
-    if (managed?.address) {
-      return { address: managed.address, network: managed.network, provider: "forgeos" };
-    }
-    throw new Error(
-      "No Forge-OS wallet bridge detected on this tab. Reload Forge-OS extension, refresh forge-os.xyz, and set extension Site access to allow this domain.",
-    );
   },
 
   connectKaspium(address: string) {

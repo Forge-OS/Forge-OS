@@ -70,6 +70,7 @@ const MAX_TOTAL_PENDING_REQUESTS = readIntEnv(
   200,
 );
 const STRICT_PENDING_GLOBAL_ORDER = readBoolEnv("VITE_EXT_PENDING_STRICT_GLOBAL_ORDER", false);
+const ENABLE_POPUP_WINDOW_FALLBACK = readBoolEnv("VITE_EXT_POPUP_WINDOW_FALLBACK", false);
 
 // Storage keys (address + network only — no phrase)
 const WALLET_META_KEY = "forgeos.wallet.meta.v2";
@@ -114,29 +115,51 @@ function syncAgentsToStorage(rawAgents: unknown): boolean {
  * pattern and works in both Chrome and Firefox.
  */
 async function openExtensionPopup(): Promise<void> {
-  try {
-    await chrome.action.openPopup();
-    return;
-  } catch { /* expected in most cases — fall through */ }
-
-  // Resolve popup path from current manifest to avoid path drift between
-  // source manifests (popup/index.html) and bundled builds
-  // (extension/popup/index.html).
   const manifest = chrome.runtime.getManifest() as any;
   const popupPathRaw =
     manifest?.action?.default_popup ||
     manifest?.browser_action?.default_popup ||
     "extension/popup/index.html";
   const popupPath = String(popupPathRaw).replace(/^\/+/, "");
+  const popupUrl = chrome.runtime.getURL(popupPath);
+
+  // Reuse an already-open Forge-OS popup window if present.
+  const windows = await chrome.windows.getAll({ populate: true });
+  const existing = windows.find((win) =>
+    (win.tabs ?? []).some((tab) => typeof tab?.url === "string" && tab.url === popupUrl)
+  );
+  if (existing?.id) {
+    await chrome.windows.update(existing.id, { focused: true });
+    return;
+  }
+
+  try {
+    await chrome.action.openPopup();
+    return;
+  } catch { /* expected in most cases — fall through */ }
+
+  if (!ENABLE_POPUP_WINDOW_FALLBACK) {
+    throw new Error("Could not open Forge-OS popup automatically.");
+  }
 
   // Fallback: open as a popup window sized for the scaled UI.
   await chrome.windows.create({
-    url: chrome.runtime.getURL(popupPath),
+    url: popupUrl,
     type: "popup",
     width: EXTENSION_POPUP_WINDOW_WIDTH,
     height: EXTENSION_POPUP_WINDOW_HEIGHT,
     focused: true,
   });
+}
+
+async function openPopupForRemainingPending(state: PendingRequestState): Promise<void> {
+  if (pendingRequestCount(state) <= 0) return;
+  try {
+    await openExtensionPopup();
+  } catch {
+    // Best effort only: requests remain queued and can still be completed
+    // when the user opens the extension manually.
+  }
 }
 
 async function getStoredWalletMeta(): Promise<WalletMeta | null> {
@@ -592,6 +615,7 @@ chrome.runtime.onMessage.addListener((message: any, sender: any) => {
 
       await setPendingRequestState(resolved.state);
       await updatePendingBadge(resolved.state);
+      await openPopupForRemainingPending(resolved.state);
     });
     return;
   }
@@ -612,6 +636,7 @@ chrome.runtime.onMessage.addListener((message: any, sender: any) => {
 
       await setPendingRequestState(resolved.state);
       await updatePendingBadge(resolved.state);
+      await openPopupForRemainingPending(resolved.state);
     });
     return;
   }
@@ -634,6 +659,7 @@ chrome.runtime.onMessage.addListener((message: any, sender: any) => {
 
       await setPendingRequestState(resolved.state);
       await updatePendingBadge(resolved.state);
+      await openPopupForRemainingPending(resolved.state);
     });
     return;
   }
@@ -654,6 +680,7 @@ chrome.runtime.onMessage.addListener((message: any, sender: any) => {
 
       await setPendingRequestState(resolved.state);
       await updatePendingBadge(resolved.state);
+      await openPopupForRemainingPending(resolved.state);
     });
     return;
   }

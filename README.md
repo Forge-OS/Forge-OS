@@ -336,6 +336,7 @@ Create `.env` from `.env.example`.
 - `VITE_SWAP_SETTLEMENT_CONFIRMATIONS`
 - `VITE_SWAP_SETTLEMENT_POLL_MS`
 - `VITE_SWAP_SETTLEMENT_TIMEOUT_MS`
+- `VITE_FORGEOS_STRICT_EXTENSION_AUTH_CONNECT` (`true` = require extension popup auth bridge; `false` = allow managed-wallet fallback when extension transport is unavailable)
 
 ### AI / Quant Runtime
 - `VITE_AI_API_URL`

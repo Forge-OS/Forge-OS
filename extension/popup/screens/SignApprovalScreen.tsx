@@ -33,14 +33,15 @@ export function SignApprovalScreen({
 
   return (
     <div style={{
-      width: EXTENSION_CONNECT_APPROVAL_BASE_WIDTH,
+      width: "100%",
+      maxWidth: EXTENSION_CONNECT_APPROVAL_BASE_WIDTH,
+      height: "100%",
       minHeight: EXTENSION_CONNECT_APPROVAL_BASE_MIN_HEIGHT,
       ...popupShellBackground(),
       display: "flex",
       flexDirection: "column",
       ...mono,
-      overflowX: "hidden",
-      overflowY: "auto",
+      overflow: "hidden",
       zoom: EXTENSION_POPUP_UI_SCALE,
     }}>
       <div style={{ padding: "12px 14px 10px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
@@ -50,7 +51,15 @@ export function SignApprovalScreen({
         </span>
       </div>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "18px 16px", gap: 12 }}>
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        padding: "18px 16px",
+        gap: 12,
+        overflowY: "auto",
+      }}>
         <div style={{ textAlign: "center" }}>
           <div style={{
             width: 52, height: 52, borderRadius: "50%",

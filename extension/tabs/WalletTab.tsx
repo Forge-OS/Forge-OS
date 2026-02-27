@@ -3,6 +3,7 @@
 // Stablecoin rows are scaffolded via TokenRegistry; enabled=false shows disabled state.
 
 import { useState, useEffect } from "react";
+import QRCode from "qrcode";
 import { C, mono } from "../../src/tokens";
 import { fmt, isKaspaAddress } from "../../src/helpers";
 import { getSession } from "../vault/vault";
@@ -34,9 +35,9 @@ interface Props {
   usdPrice: number;
   network: string;
   hideBalances?: boolean;
-  onOpenSwap?: () => void;
   /** When set, immediately opens the send or receive panel */
   mode?: "send" | "receive";
+  modeRequestId?: number;
   onModeConsumed?: () => void;
   onBalanceInvalidated?: () => void;
 }
@@ -65,8 +66,8 @@ export function WalletTab({
   usdPrice,
   network,
   hideBalances = false,
-  onOpenSwap,
   mode,
+  modeRequestId,
   onModeConsumed,
   onBalanceInvalidated,
 }: Props) {
@@ -79,6 +80,8 @@ export function WalletTab({
   const [resultTxId, setResultTxId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [addrCopied, setAddrCopied] = useState(false);
+  const [receiveQrDataUrl, setReceiveQrDataUrl] = useState<string | null>(null);
+  const [receiveQrError, setReceiveQrError] = useState<string | null>(null);
   const [utxos, setUtxos] = useState<Utxo[]>([]);
   const [utxoLoading, setUtxoLoading] = useState(false);
   const [utxoError, setUtxoError] = useState<string | null>(null);
@@ -87,9 +90,56 @@ export function WalletTab({
 
   // Open send/receive panel when triggered from parent (hero buttons)
   useEffect(() => {
-    if (mode === "send") { setSendStep("form"); setShowReceive(false); onModeConsumed?.(); }
-    if (mode === "receive") { setShowReceive(true); setSendStep("idle"); onModeConsumed?.(); }
-  }, [mode]);
+    if (!mode) return;
+    if (mode === "send") {
+      setShowReceive(false);
+      setSendStep("form");
+      setPendingTx(null);
+      setDryRunErrors([]);
+      setErrorMsg(null);
+      setResultTxId(null);
+    } else {
+      setShowReceive(true);
+      setSendStep("idle");
+    }
+    onModeConsumed?.();
+  }, [mode, modeRequestId, onModeConsumed]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const makeReceiveQr = async () => {
+      if (!showReceive || !address) {
+        setReceiveQrDataUrl(null);
+        setReceiveQrError(null);
+        return;
+      }
+      setReceiveQrError(null);
+      try {
+        const dataUrl = await QRCode.toDataURL(address, {
+          errorCorrectionLevel: "M",
+          margin: 1,
+          width: 220,
+          color: {
+            dark: "#39DDB6",
+            light: "#0A1118",
+          },
+        });
+        if (cancelled) return;
+        setReceiveQrDataUrl(dataUrl);
+      } catch (err) {
+        if (cancelled) return;
+        setReceiveQrDataUrl(null);
+        setReceiveQrError(err instanceof Error ? err.message : "Failed to generate QR code.");
+      }
+    };
+
+    makeReceiveQr().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showReceive, address]);
 
   useEffect(() => {
     let alive = true;
@@ -279,6 +329,12 @@ export function WalletTab({
   const utxoUpdatedLabel = utxoUpdatedAt
     ? new Date(utxoUpdatedAt).toLocaleTimeString([], { hour12: false })
     : "—";
+  const onChainVerified = Boolean(address && !utxoLoading && !utxoError && utxoUpdatedAt !== null);
+  const verificationLabel = onChainVerified
+    ? `ON-CHAIN VERIFIED · ${network.toUpperCase()} · ${utxoUpdatedLabel}`
+    : utxoLoading
+      ? "VERIFYING ON-CHAIN STATE…"
+      : "ON-CHAIN VERIFICATION PENDING";
   const masked = (value: string) => (hideBalances ? "••••" : value);
   const maskedKas = (amount: number, digits: number) => (hideBalances ? "•••• KAS" : `${fmt(amount, digits)} KAS`);
   const maskedUsd = (amount: number, digits: number) => (hideBalances ? "$••••" : `$${fmt(amount, digits)}`);
@@ -487,15 +543,6 @@ export function WalletTab({
         </div>
       </div>
 
-      {/* Action row */}
-      {sendStep === "idle" && !showReceive && address && (
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={() => setSendStep("form")} style={tabBtn(false)}>SEND</button>
-          <button onClick={() => setShowReceive(true)} style={tabBtn(false)}>RECEIVE</button>
-          <button onClick={() => onOpenSwap ? onOpenSwap() : chrome.tabs.create({ url: "https://forge-os.xyz" })} style={tabBtn(false)}>SWAP</button>
-        </div>
-      )}
-
       {/* FORM */}
       {sendStep === "form" && (
         <div style={panel()}>
@@ -601,11 +648,38 @@ export function WalletTab({
             <div style={sectionTitle}>RECEIVE KAS</div>
             <button onClick={() => setShowReceive(false)} style={{ background: "none", border: "none", color: C.dim, fontSize: 8, cursor: "pointer", ...mono }}>✕</button>
           </div>
+          <div style={{ ...insetCard(), display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+            <div style={{ fontSize: 8, color: onChainVerified ? C.ok : C.warn, fontWeight: 700, letterSpacing: "0.06em" }}>
+              {verificationLabel}
+            </div>
+            <button
+              onClick={() => chrome.tabs.create({ url: explorerUrl })}
+              style={{ ...outlineButton(C.accent, true), padding: "4px 7px", fontSize: 8, color: C.accent, flexShrink: 0 }}
+            >
+              EXPLORER ↗
+            </button>
+          </div>
+          <div style={{ ...insetCard(), display: "flex", justifyContent: "center", alignItems: "center", minHeight: 140, marginBottom: 6 }}>
+            {receiveQrDataUrl ? (
+              <img
+                src={receiveQrDataUrl}
+                alt="Wallet receive QR"
+                style={{ width: 138, height: 138, borderRadius: 8, border: `1px solid ${C.border}` }}
+              />
+            ) : (
+              <div style={{ fontSize: 8, color: receiveQrError ? C.danger : C.dim }}>
+                {receiveQrError ? "QR ERROR" : "GENERATING QR…"}
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 8, color: C.muted, letterSpacing: "0.08em" }}>CONNECTED WALLET ADDRESS</div>
           <div style={{ ...insetCard(), fontSize: 8, color: C.dim, lineHeight: 1.6, wordBreak: "break-all", marginBottom: 6 }}>{address}</div>
           <button onClick={copyAddress} style={{ ...outlineButton(addrCopied ? C.ok : C.dim, true), padding: "7px 8px", color: addrCopied ? C.ok : C.dim, width: "100%" }}>
             {addrCopied ? "✓ COPIED" : "COPY ADDRESS"}
           </button>
-          <div style={{ fontSize: 8, color: C.dim, lineHeight: 1.5, marginTop: 4 }}>Send KAS to this address from any Kaspa wallet. Transactions confirm at BlockDAG speed.</div>
+          <div style={{ fontSize: 8, color: C.dim, lineHeight: 1.5, marginTop: 4 }}>
+            Send KAS to this address from any Kaspa wallet. Funds and UTXO state are verified against live on-chain data.
+          </div>
         </div>
       )}
     </div>
@@ -621,14 +695,6 @@ const panel = (): React.CSSProperties => ({
 
 const inputStyle = (hasError: boolean): React.CSSProperties => ({
   ...monoInput(hasError),
-});
-
-const tabBtn = (_active: boolean): React.CSSProperties => ({
-  ...outlineButton(C.dim, true),
-  flex: 1,
-  padding: "8px 0",
-  textTransform: "uppercase" as const,
-  letterSpacing: "0.1em",
 });
 
 const submitBtn = (active: boolean): React.CSSProperties => ({

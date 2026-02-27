@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { C, mono } from "../../src/tokens";
 import { shortAddr, withKaspaAddressNetwork } from "../../src/helpers";
 import { fetchKasBalance, fetchKasUsdPrice } from "../shared/api";
@@ -51,6 +51,15 @@ type Screen =
 
 const PENDING_CONNECT_KEY = "forgeos.connect.pending";
 const PENDING_SIGN_KEY = "forgeos.sign.pending";
+const SITE_AUTH_SESSION_GRACE_MS = 120_000;
+const TRUSTED_SITE_SIGN_HOSTS = new Set([
+  "forge-os.xyz",
+  "www.forge-os.xyz",
+  "forgeos.xyz",
+  "www.forgeos.xyz",
+  "localhost",
+  "127.0.0.1",
+]);
 
 type PendingConnectRequest = {
   requestId: string;
@@ -74,6 +83,7 @@ export function Popup() {
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<Tab>("wallet");
   const [walletMode, setWalletMode] = useState<"send" | "receive" | undefined>();
+  const [walletModeRequestId, setWalletModeRequestId] = useState(0);
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
   const [persistUnlockSessionEnabled, setPersistUnlockSessionEnabled] = useState(false);
   const [hidePortfolioBalances, setHidePortfolioBalancesState] = useState(false);
@@ -81,6 +91,8 @@ export function Popup() {
   const [pendingSign, setPendingSign] = useState<PendingSignRequest | null>(null);
   const [signingSiteRequest, setSigningSiteRequest] = useState(false);
   const [siteSignError, setSiteSignError] = useState<string | null>(null);
+  const autoSignedRequestIds = useRef(new Set<string>());
+  const transientSessionCleanupTimer = useRef<number | null>(null);
   const [lockedAddress, setLockedAddress] = useState<string | null>(null);
   const [dagScore, setDagScore] = useState<string | null>(null);
   const [activeRpcEndpoint, setActiveRpcEndpoint] = useState<string | null>(null);
@@ -99,6 +111,21 @@ export function Popup() {
   const BALANCE_FEED_STALE_MS = 45_000;
   const PRICE_FEED_STALE_MS = 45_000;
   const DAG_FEED_STALE_MS = 60_000;
+
+  const isAutoSignEligibleRequest = useCallback((request: PendingSignRequest | null) => {
+    if (!request) return false;
+    let host = "";
+    try {
+      host = request.origin ? new URL(request.origin).hostname.toLowerCase() : "";
+    } catch {
+      host = "";
+    }
+    const trustedOrigin = TRUSTED_SITE_SIGN_HOSTS.has(host);
+    const isSiwaMessage =
+      request.message.includes("Sign in to Forge.OS")
+      && request.message.includes("Domain: forge-os.xyz");
+    return trustedOrigin && isSiwaMessage;
+  }, []);
 
   // ── Initialise ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -182,6 +209,46 @@ export function Popup() {
   useEffect(() => {
     setSiteSignError(null);
   }, [pendingSign?.requestId]);
+
+  // When unlock-session persistence is disabled, still keep a short-lived
+  // cached session for connect->sign website auth handshakes so users do not
+  // get prompted twice if the popup closes/reopens between requests.
+  useEffect(() => {
+    const clearTransientCleanupTimer = () => {
+      if (transientSessionCleanupTimer.current !== null) {
+        window.clearTimeout(transientSessionCleanupTimer.current);
+        transientSessionCleanupTimer.current = null;
+      }
+    };
+
+    if (screen.type !== "unlocked" || persistUnlockSessionEnabled) {
+      clearTransientCleanupTimer();
+      return;
+    }
+
+    const hasPendingSiteApproval = Boolean(pendingConnect || pendingSign);
+    if (hasPendingSiteApproval) {
+      clearTransientCleanupTimer();
+      return;
+    }
+
+    clearTransientCleanupTimer();
+    transientSessionCleanupTimer.current = window.setTimeout(() => {
+      transientSessionCleanupTimer.current = null;
+      void setSessionPersistence(false);
+    }, SITE_AUTH_SESSION_GRACE_MS);
+
+    return clearTransientCleanupTimer;
+  }, [screen.type, persistUnlockSessionEnabled, pendingConnect?.requestId, pendingSign?.requestId]);
+
+  useEffect(() => {
+    return () => {
+      if (transientSessionCleanupTimer.current !== null) {
+        window.clearTimeout(transientSessionCleanupTimer.current);
+        transientSessionCleanupTimer.current = null;
+      }
+    };
+  }, []);
 
   // ── Auto-lock listener ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -463,6 +530,21 @@ export function Popup() {
     window.close();
   };
 
+  // Auto-approve only the canonical Forge-OS SIWA message to avoid showing an
+  // extra signature screen right after connect-to-site approval.
+  useEffect(() => {
+    if (screen.type !== "unlocked" || !pendingSign || signingSiteRequest) return;
+    if (!session?.mnemonic) return;
+
+    const requestId = pendingSign.requestId;
+    if (!requestId || autoSignedRequestIds.current.has(requestId)) return;
+
+    if (!isAutoSignEligibleRequest(pendingSign)) return;
+
+    autoSignedRequestIds.current.add(requestId);
+    void handleApproveSiteSign();
+  }, [screen.type, pendingSign, session?.mnemonic, signingSiteRequest, isAutoSignEligibleRequest]);
+
   // ── Screen renders ────────────────────────────────────────────────────────────
   if (screen.type === "loading") {
     return (
@@ -494,11 +576,13 @@ export function Popup() {
   }
 
   if (screen.type === "locked") {
+    const shouldPersistUnlockSession =
+      persistUnlockSessionEnabled || Boolean(pendingConnect || pendingSign);
     return (
       <LockScreen
         walletAddress={lockedAddress}
         autoLockMinutes={autoLockMinutes}
-        persistSession={persistUnlockSessionEnabled}
+        persistSession={shouldPersistUnlockSession}
         onUnlock={handleUnlock}
         onReset={handleReset}
       />
@@ -508,7 +592,7 @@ export function Popup() {
   const isManagedWallet = Boolean(session?.mnemonic);
 
   // ── Pending sign approval (MetaMask-style) ───────────────────────────────────
-  if (pendingSign && activeAddress && isManagedWallet) {
+  if (pendingSign && activeAddress && isManagedWallet && !isAutoSignEligibleRequest(pendingSign)) {
     return (
       <SignApprovalScreen
         address={activeAddress}
@@ -708,8 +792,22 @@ export function Popup() {
           {/* Action buttons */}
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             {[
-              { label: "SEND",    action: () => { setTab("wallet"); setWalletMode("send"); } },
-              { label: "RECEIVE", action: () => { setTab("wallet"); setWalletMode("receive"); } },
+              {
+                label: "SEND",
+                action: () => {
+                  setTab("wallet");
+                  setWalletMode("send");
+                  setWalletModeRequestId((id) => id + 1);
+                },
+              },
+              {
+                label: "RECEIVE",
+                action: () => {
+                  setTab("wallet");
+                  setWalletMode("receive");
+                  setWalletModeRequestId((id) => id + 1);
+                },
+              },
               { label: "SWAP",  action: () => setTab("swap") },
             ].map(btn => (
               <button
@@ -769,8 +867,8 @@ export function Popup() {
             balance={balance}
             usdPrice={usdPrice}
             network={network}
-            onOpenSwap={() => setTab("swap")}
             mode={walletMode}
+            modeRequestId={walletModeRequestId}
             onModeConsumed={() => setWalletMode(undefined)}
             onBalanceInvalidated={() => session?.address && fetchBalances(session.address, network)}
             hideBalances={hidePortfolioBalances}

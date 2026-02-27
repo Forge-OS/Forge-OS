@@ -236,6 +236,50 @@ describe('WalletAdapter', () => {
     );
   });
 
+  it('connectForgeOS coalesces concurrent connect requests to a single bridge connect', async () => {
+    const windowMock = setWindowForgeOSBridge();
+    const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
+    const [a, b] = await Promise.all([WalletAdapter.connectForgeOS(), WalletAdapter.connectForgeOS()]);
+    expect(a.address).toBe(b.address);
+    expect(a.network).toBe('mainnet');
+
+    const connectCalls = (windowMock.postMessage as any).mock.calls.filter(
+      (args: any[]) => args?.[0]?.__forgeos__ === true && args?.[0]?.type === 'FORGEOS_CONNECT'
+    );
+    expect(connectCalls.length).toBe(1);
+  });
+
+  it('connectForgeOS enforces strict extension-auth policy when configured', async () => {
+    vi.stubEnv('VITE_FORGEOS_STRICT_EXTENSION_AUTH_CONNECT', 'true');
+    setWindowForgeOSNoBridge({
+      managedWalletJson: JSON.stringify({
+        phrase: 'word '.repeat(12).trim(),
+        address: 'kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85',
+        network: 'mainnet',
+      }),
+      providerInjected: true,
+    });
+    const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
+    await expect(WalletAdapter.connectForgeOS()).rejects.toThrow(/extension-auth connect is required/i);
+  });
+
+  it('connectForgeOS allows managed fallback when strict extension-auth policy is disabled', async () => {
+    vi.stubEnv('VITE_FORGEOS_STRICT_EXTENSION_AUTH_CONNECT', 'false');
+    setWindowForgeOSNoBridge({
+      managedWalletJson: JSON.stringify({
+        phrase: 'word '.repeat(12).trim(),
+        address: 'kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85',
+        network: 'mainnet',
+      }),
+      providerInjected: true,
+    });
+    const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
+    const session = await WalletAdapter.connectForgeOS();
+    expect(session.provider).toBe('forgeos');
+    expect(session.network).toBe('mainnet');
+    expect(session.address).toMatch(/^kaspa:/);
+  });
+
   it('signMessageForgeOS uses site bridge fallback when injected provider is unavailable', async () => {
     const windowMock = setWindowForgeOSBridge({ signResult: 'bridge_signature_123' });
     const { WalletAdapter } = await import('../../src/wallet/WalletAdapter');
