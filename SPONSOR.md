@@ -24,16 +24,11 @@ kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85
 ```
 <p align="center">
 </p>
-
-### Option 2: GitHub Sponsors
-
-You can also sponsor through GitHub Sponsors if you prefer. Visit your repo's "Sponsor" button to set up recurring support.
-
 ---
-
 ## 📦 What Your Sponsorship Goes To
 
 - ☕ Coffee for late-night debugging sessions
+- AI , and Time... 
 - 🚀 Infrastructure costs (servers, domains, APIs)
 - 📱 Wallet integration testing
 - 🔧 New feature development
