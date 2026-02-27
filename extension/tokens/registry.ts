@@ -3,7 +3,7 @@
 // Feature flag:
 //   STABLES_ENABLED = false  →  USDT/USDC render as disabled scaffolding.
 //   Flip to true + set assetId when Kaspa native assets go live.
-//   ZRX remains disabled until this build enables 0x route execution.
+//   ZEROX_ENABLED gates 0x route token visibility in wallet UI.
 //
 // DO NOT add fake balances. DO NOT allow transfers for disabled tokens.
 
@@ -11,7 +11,7 @@ import type { Token, TokenId, TokenRegistry } from "./types";
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
 export const STABLES_ENABLED = true;
-export const ZEROX_ENABLED = false;
+export const ZEROX_ENABLED = true;
 
 // ── Default registry ──────────────────────────────────────────────────────────
 export const DEFAULT_REGISTRY: TokenRegistry = {

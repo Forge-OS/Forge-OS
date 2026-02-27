@@ -40,9 +40,17 @@ describe("swap route source", () => {
     expect(decision.requiresEvmSigner).toBe(true);
   });
 
-  it("rejects ZRX pair on kaspa_native route source", () => {
+  it("auto-routes non-KAS pairs to evm_0x when kaspa_native hybrid auto is enabled", () => {
     const decision = resolveSwapRouteSource("ZRX", "USDC", "kaspa_native");
+    expect(decision.allowed).toBe(true);
+    expect(decision.source).toBe("evm_0x");
+    expect(decision.requiresEvmSigner).toBe(true);
+  });
+
+  it("rejects ZRX pair when kaspa_native route is pinned (hybrid auto disabled)", () => {
+    const decision = resolveSwapRouteSource("ZRX", "USDC", "kaspa_native", { allowHybridAuto: false });
     expect(decision.allowed).toBe(false);
+    expect(decision.source).toBe("kaspa_native");
   });
 });
 

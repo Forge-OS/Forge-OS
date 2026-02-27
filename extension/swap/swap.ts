@@ -2,7 +2,7 @@
 // All public functions are safe to call regardless of SWAP_CONFIG.enabled;
 // they return appropriate disabled/null responses rather than throwing.
 
-import type { SwapRequest, SwapQuote } from "./types";
+import type { SwapRequest, SwapQuote, SwapRouteSource } from "./types";
 import { SWAP_CONFIG } from "./types";
 import { isTokenEnabled } from "../tokens/registry";
 import { getSession } from "../vault/vault";
@@ -51,6 +51,11 @@ import { broadcastTransaction } from "../tx/broadcast";
 export interface SwapGatingStatus {
   enabled: boolean;
   reason: string | null; // Non-null explains why swap is disabled
+}
+
+export interface SwapQuoteRequestOptions {
+  routeSource?: SwapRouteSource;
+  allowHybridAuto?: boolean;
 }
 
 function randomId(prefix: string): string {
@@ -131,17 +136,19 @@ export function getSwapGatingStatus(): SwapGatingStatus {
  * Validate a swap request before requesting a quote.
  * Returns a list of errors (empty = valid).
  */
-export function validateSwapRequest(req: SwapRequest): string[] {
+export function validateSwapRequest(req: SwapRequest, options: SwapQuoteRequestOptions = {}): string[] {
   const errors: string[] = [];
   const customOut = req.customTokenOut ?? null;
   const usesCustomOut = Boolean(customOut);
   const routeTokenOut = usesCustomOut ? "USDC" : req.tokenOut;
+  const routeSource = options.routeSource ?? SWAP_CONFIG.routeSource;
+  const allowHybridAuto = options.allowHybridAuto !== false;
 
   if (!usesCustomOut && req.tokenIn === req.tokenOut) {
     errors.push("Token in and token out must be different.");
   }
 
-  const route = resolveSwapRouteSource(req.tokenIn, routeTokenOut, SWAP_CONFIG.routeSource);
+  const route = resolveSwapRouteSource(req.tokenIn, routeTokenOut, routeSource, { allowHybridAuto });
   if (!route.allowed && route.reason) {
     errors.push(route.reason);
   }
@@ -198,17 +205,19 @@ export function validateSwapRequest(req: SwapRequest): string[] {
  * Always returns null when SWAP_CONFIG.enabled = false.
  * Throws on network/validation error when enabled.
  */
-export async function getSwapQuote(req: SwapRequest): Promise<SwapQuote | null> {
+export async function getSwapQuote(req: SwapRequest, options: SwapQuoteRequestOptions = {}): Promise<SwapQuote | null> {
   const gating = getSwapGatingStatus();
   if (!gating.enabled) return null;
+  const routeSource = options.routeSource ?? SWAP_CONFIG.routeSource;
+  const allowHybridAuto = options.allowHybridAuto !== false;
 
-  const validationErrors = validateSwapRequest(req);
+  const validationErrors = validateSwapRequest(req, { routeSource, allowHybridAuto });
   if (validationErrors.length > 0) {
     throw new Error(`SWAP_VALIDATION: ${validationErrors.join("; ")}`);
   }
 
   const routeTokenOut = req.customTokenOut ? "USDC" : req.tokenOut;
-  const route = resolveSwapRouteSource(req.tokenIn, routeTokenOut, SWAP_CONFIG.routeSource);
+  const route = resolveSwapRouteSource(req.tokenIn, routeTokenOut, routeSource, { allowHybridAuto });
   if (route.source === "kaspa_native") {
     const endpoint = SWAP_CONFIG.dexEndpoint;
     if (!endpoint) {

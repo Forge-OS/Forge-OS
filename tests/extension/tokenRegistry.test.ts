@@ -31,11 +31,11 @@ describe("DEFAULT_REGISTRY", () => {
     expect(DEFAULT_REGISTRY.tokens.USDC.enabled).toBe(true);
   });
 
-  it("disabled reasons are empty for enabled stables and present for disabled routes", async () => {
+  it("disabled reasons are empty for enabled stables and enabled 0x route token", async () => {
     const { DEFAULT_REGISTRY } = await import("../../extension/tokens/registry");
     expect(DEFAULT_REGISTRY.tokens.USDT.disabledReason).toBeNull();
     expect(DEFAULT_REGISTRY.tokens.USDC.disabledReason).toBeNull();
-    expect(DEFAULT_REGISTRY.tokens.ZRX.disabledReason).toBeTruthy();
+    expect(DEFAULT_REGISTRY.tokens.ZRX.disabledReason).toBeNull();
   });
 
   it("USDT/USDC have 6 decimals and ZRX has 18 decimals", async () => {
@@ -71,7 +71,7 @@ describe("getToken", () => {
     expect(usdc.symbol).toBe("USDC");
   });
 
-  it("returns ZRX token definition (disabled route)", async () => {
+  it("returns ZRX token definition (0x route enabled)", async () => {
     const { getToken } = await import("../../extension/tokens/registry");
     const zrx = getToken("ZRX");
     expect(zrx.id).toBe("ZRX");
@@ -97,9 +97,9 @@ describe("isTokenEnabled", () => {
     expect(isTokenEnabled("USDC")).toBe(true);
   });
 
-  it("returns false for ZRX until explicit routing support is enabled", async () => {
+  it("returns true for ZRX when 0x routing support is enabled", async () => {
     const { isTokenEnabled } = await import("../../extension/tokens/registry");
-    expect(isTokenEnabled("ZRX")).toBe(false);
+    expect(isTokenEnabled("ZRX")).toBe(true);
   });
 });
 
@@ -118,12 +118,12 @@ describe("getEnabledTokens", () => {
     expect(ids).toContain("KAS");
   });
 
-  it("includes USDT/USDC and excludes ZRX while 0x route is disabled", async () => {
+  it("includes USDT/USDC and ZRX when 0x route is enabled", async () => {
     const { getEnabledTokens } = await import("../../extension/tokens/registry");
     const ids = getEnabledTokens().map((t) => t.id);
     expect(ids).toContain("USDT");
     expect(ids).toContain("USDC");
-    expect(ids).not.toContain("ZRX");
+    expect(ids).toContain("ZRX");
   });
 });
 

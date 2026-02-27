@@ -415,6 +415,62 @@ function quotePathCandidates(address: string, standard: KaspaTokenStandard): str
   ];
 }
 
+function queryPathCandidates(query: string, standard: KaspaTokenStandard): string[] {
+  const encoded = encodeURIComponent(query);
+  if (standard === "krc721") {
+    return [
+      `/krc721/tokens?search=${encoded}`,
+      `/krc721/tokens?q=${encoded}`,
+      `/krc721/collections?search=${encoded}`,
+      `/krc721/search?query=${encoded}`,
+      `/tokens?search=${encoded}`,
+      `/token/search?query=${encoded}`,
+      `/v1/krc721/tokens?search=${encoded}`,
+    ];
+  }
+  return [
+    `/krc20/tokens?search=${encoded}`,
+    `/krc20/tokens?q=${encoded}`,
+    `/krc20/search?query=${encoded}`,
+    `/tokens?search=${encoded}`,
+    `/token/search?query=${encoded}`,
+    `/v1/krc20/tokens?search=${encoded}`,
+  ];
+}
+
+function scoreCandidateForQuery(candidate: Record<string, unknown>, queryLower: string): number {
+  const symbol = pickString(candidate, ["symbol", "ticker", "tick", "tokenSymbol"]).toLowerCase();
+  const name = pickString(candidate, ["name", "collectionName", "tokenName", "title"]).toLowerCase();
+  const address = pickString(candidate, ["address", "tokenAddress", "contractAddress", "contract", "id", "assetId"]).toLowerCase();
+  if (!address) return Number.POSITIVE_INFINITY;
+  if (symbol === queryLower) return 0;
+  if (name === queryLower) return 1;
+  if (address === queryLower) return 2;
+  if (symbol.startsWith(queryLower)) return 3;
+  if (name.startsWith(queryLower)) return 4;
+  if (symbol.includes(queryLower)) return 5;
+  if (name.includes(queryLower)) return 6;
+  return Number.POSITIVE_INFINITY;
+}
+
+function findMatchingCandidateByQuery(
+  candidates: Record<string, unknown>[],
+  query: string,
+): Record<string, unknown> | null {
+  const queryLower = String(query || "").trim().toLowerCase();
+  if (!queryLower) return null;
+  let best: Record<string, unknown> | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const score = scoreCandidateForQuery(candidate, queryLower);
+    if (score < bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return Number.isFinite(bestScore) ? best : null;
+}
+
 async function fetchRemoteMetadata(
   endpoint: string,
   address: string,
@@ -444,6 +500,55 @@ async function fetchRemoteMetadata(
       if (!candidate) continue;
       return {
         token: normalizeMetadata(candidate, address, standard),
+        outcome: "success",
+        elapsedMs: Math.max(0, Date.now() - startedAt),
+      };
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === "AbortError") sawTimeout = true;
+      else sawFailure = true;
+    }
+  }
+  return {
+    token: null,
+    outcome: sawTimeout ? "timeout" : sawFailure ? "failure" : "miss",
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+  };
+}
+
+async function fetchRemoteMetadataByQuery(
+  endpoint: string,
+  query: string,
+  standard: KaspaTokenStandard,
+): Promise<{ token: SwapCustomToken | null; outcome: EndpointFetchOutcome; elapsedMs: number }> {
+  const startedAt = Date.now();
+  const base = endpoint.replace(/\/+$/, "");
+  const paths = queryPathCandidates(query, standard);
+  let sawFailure = false;
+  let sawTimeout = false;
+
+  for (const path of paths) {
+    try {
+      const res = await withTimeout(`${base}${path}`, { method: "GET" });
+      if (!res.ok) {
+        if (res.status >= 500 || res.status === 429) sawFailure = true;
+        continue;
+      }
+      const raw = await res.json().catch(() => null);
+      if (!raw) {
+        sawFailure = true;
+        continue;
+      }
+      const candidates = extractObjectCandidates(raw);
+      if (candidates.length === 0) continue;
+      const candidate = findMatchingCandidateByQuery(candidates, query);
+      if (!candidate) continue;
+      const candidateAddress = pickString(
+        candidate,
+        ["address", "tokenAddress", "contractAddress", "contract", "id", "assetId"],
+      );
+      if (!candidateAddress) continue;
+      return {
+        token: normalizeMetadata(candidate, candidateAddress, standard),
         outcome: "success",
         elapsedMs: Math.max(0, Date.now() - startedAt),
       };
@@ -492,6 +597,40 @@ export async function resolveTokenFromAddress(
   };
   writeMetadataCache(key, fallback);
   return cloneToken(fallback);
+}
+
+function looksLikeAddress(input: string): boolean {
+  const v = String(input || "").trim();
+  if (!v) return false;
+  if (v.includes(":")) return true; // kaspa:/kaspatest: formats
+  if (/^0x[a-fA-F0-9]{40}$/.test(v)) return true;
+  // Generic contract-ish identifier fallback.
+  return /^[a-zA-Z0-9_-]{24,}$/.test(v);
+}
+
+export async function resolveTokenFromQuery(
+  queryInput: string,
+  standard: KaspaTokenStandard,
+  network: string,
+): Promise<SwapCustomToken | null> {
+  const query = String(queryInput || "").trim();
+  if (!query) return null;
+
+  if (looksLikeAddress(query)) {
+    return resolveTokenFromAddress(query, standard, network);
+  }
+
+  const endpoints = rankEndpoints(metadataEndpointsForNetwork(network));
+  for (const endpoint of endpoints) {
+    const result = await fetchRemoteMetadataByQuery(endpoint, query, standard);
+    updateEndpointHealth(endpoint, result.outcome, result.elapsedMs);
+    if (result.token) {
+      writeMetadataCache(cacheKey(result.token.address, result.token.standard, network), result.token);
+      return cloneToken(result.token);
+    }
+  }
+
+  return null;
 }
 
 export function __clearTokenMetadataCacheForTests(): void {

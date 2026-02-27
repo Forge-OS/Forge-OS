@@ -9,6 +9,12 @@ export interface SwapRouteDecision {
   requiresEvmSigner: boolean;
 }
 
+export interface ResolveSwapRouteOptions {
+  // When true (default), kaspa_native source can auto-switch to evm_0x
+  // for non-KAS pairs. Set false to pin the source strictly.
+  allowHybridAuto?: boolean;
+}
+
 function routeLabel(source: SwapRouteSource): string {
   switch (source) {
     case "kaspa_native":
@@ -33,7 +39,10 @@ export function resolveSwapRouteSource(
   tokenIn: TokenId,
   tokenOut: TokenId,
   source: SwapRouteSource = SWAP_CONFIG.routeSource,
+  options: ResolveSwapRouteOptions = {},
 ): SwapRouteDecision {
+  const allowHybridAuto = options.allowHybridAuto !== false;
+
   if (source === "blocked") {
     return {
       source,
@@ -45,12 +54,26 @@ export function resolveSwapRouteSource(
   }
 
   if (source === "kaspa_native") {
+    // Hybrid behavior:
+    // - Keep KAS-involved pairs on Kaspa-native route.
+    // - Auto-route non-KAS pairs to 0x EVM so the wallet build can serve
+    //   both route domains without forcing a global mode switch.
+    if (allowHybridAuto && !tokenPairIncludesKaspaNative(tokenIn, tokenOut)) {
+      return {
+        source: "evm_0x",
+        label: routeLabel("evm_0x"),
+        allowed: true,
+        reason: null,
+        requiresEvmSigner: true,
+      };
+    }
+
     if (tokenPairIncludes0xToken(tokenIn, tokenOut)) {
       return {
         source,
         label: routeLabel(source),
         allowed: false,
-        reason: "0x token routes are not enabled on Kaspa-native swap.",
+        reason: "0x routes are EVM-domain only and cannot bridge directly with native KAS.",
         requiresEvmSigner: false,
       };
     }
