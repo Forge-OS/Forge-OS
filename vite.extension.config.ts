@@ -6,15 +6,23 @@ import { patchKaspaWasmForBrowser } from "./build/vite-kaspa-wasm-browser";
 
 const browser = process.env.TARGET_BROWSER || "chrome";
 const includeLocalhostMatches = process.env.FORGEOS_EXTENSION_LOCALHOST === "1";
+const extraSiteMatches = String(process.env.FORGEOS_EXTENSION_EXTRA_SITE_MATCHES || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 const SITE_MATCHES = [
   "*://forge-os.xyz/*",
+  "*://*.forge-os.xyz/*",
   "*://www.forge-os.xyz/*",
   "*://forgeos.xyz/*",
   "*://www.forgeos.xyz/*",
+  "*://gryszzz.github.io/Forge-OS/*",
+  "*://forge-os.pages.dev/*",
   ...(includeLocalhostMatches
     ? ["*://localhost/*", "*://127.0.0.1/*"]
     : []),
+  ...extraSiteMatches,
 ];
 
 export default defineConfig({

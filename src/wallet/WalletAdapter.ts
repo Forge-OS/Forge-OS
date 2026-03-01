@@ -168,6 +168,18 @@ const FORGEOS_CONNECT_TIMEOUT_MS = readIntEnv(
 );
 const FORGEOS_CONNECT_TIMEOUT_MESSAGE =
   "Forge-OS connect timed out. Open the extension popup, unlock your wallet, and approve the site connection.";
+const FORGEOS_BRIDGE_SITE_HINT =
+  "Supported web origins: forge-os.xyz, *.forge-os.xyz, forgeos.xyz, gryszzz.github.io/Forge-OS, and localhost.";
+
+function currentOriginLabel(): string {
+  try {
+    return typeof window !== "undefined" && window.location?.origin
+      ? window.location.origin
+      : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 export type ForgeOSTransportType = "provider" | "bridge" | "managed" | "none";
 
@@ -434,7 +446,7 @@ export const WalletAdapter = {
       if (STRICT_EXTENSION_AUTH_CONNECT) {
         if (providerConnectError) throw providerConnectError;
         throw new Error(
-          "Forge-OS extension-auth connect is required in this environment. Reload Forge-OS extension, refresh forge-os.xyz, and set extension Site access to allow this domain.",
+          `Forge-OS extension-auth connect is required in this environment. Current origin: ${currentOriginLabel()}. Reload the extension, refresh this page, and enable extension Site access for this domain. ${FORGEOS_BRIDGE_SITE_HINT}`,
         );
       }
       // Fallback: read managed wallet directly from localStorage (no extension needed)
@@ -444,7 +456,7 @@ export const WalletAdapter = {
       }
       if (providerConnectError) throw providerConnectError;
       throw new Error(
-        "No Forge-OS wallet bridge detected on this tab. Reload Forge-OS extension, refresh forge-os.xyz, and set extension Site access to allow this domain.",
+        `No Forge-OS wallet bridge detected on this tab (origin: ${currentOriginLabel()}). Reload the extension, refresh this page, and enable extension Site access for this domain. ${FORGEOS_BRIDGE_SITE_HINT}`,
       );
     })();
 

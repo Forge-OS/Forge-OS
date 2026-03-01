@@ -24,9 +24,12 @@
     {
       "matches": [
         "*://forge-os.xyz/*",
+        "*://*.forge-os.xyz/*",
         "*://www.forge-os.xyz/*",
         "*://forgeos.xyz/*",
-        "*://www.forgeos.xyz/*"
+        "*://www.forgeos.xyz/*",
+        "*://gryszzz.github.io/Forge-OS/*",
+        "*://forge-os.pages.dev/*"
       ],
       "js": ["content/page-provider.ts"],
       "world": "MAIN",
@@ -35,9 +38,12 @@
     {
       "matches": [
         "*://forge-os.xyz/*",
+        "*://*.forge-os.xyz/*",
         "*://www.forge-os.xyz/*",
         "*://forgeos.xyz/*",
-        "*://www.forgeos.xyz/*"
+        "*://www.forgeos.xyz/*",
+        "*://gryszzz.github.io/Forge-OS/*",
+        "*://forge-os.pages.dev/*"
       ],
       "js": ["content/site-bridge.ts"],
       "run_at": "document_idle"
@@ -55,7 +61,12 @@
     "https://api-tn12.kaspa.org/*",
     "https://*.kaspa.org/*",
     "https://forge-os.xyz/*",
+    "https://*.forge-os.xyz/*",
     "https://www.forge-os.xyz/*",
+    "https://forgeos.xyz/*",
+    "https://www.forgeos.xyz/*",
+    "https://gryszzz.github.io/Forge-OS/*",
+    "https://forge-os.pages.dev/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ]
