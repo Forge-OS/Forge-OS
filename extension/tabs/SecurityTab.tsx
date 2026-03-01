@@ -2,12 +2,13 @@
 // The mnemonic is NEVER passed as a prop; it is read from the in-memory
 // session (unlockVault) only when the user explicitly authenticates here.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { C, mono } from "../../src/tokens";
 import { fmt, shortAddr } from "../../src/helpers";
 import { unlockVault, changePassword, resetWallet } from "../vault/vault";
 import {
   describeKaspaProviderPreset,
+  getKaspaBackendSelection,
   invalidateEndpointPoolCache,
   probeKaspaEndpointPool,
   type KaspaEndpointHealthSnapshot,
@@ -66,6 +67,7 @@ interface Props {
 }
 
 type Panel = "none" | "reveal" | "change_pw" | "reset";
+type RpcConnectorState = "checking" | "connected" | "degraded" | "disconnected";
 
 const LOCAL_NODE_PROFILES: LocalNodeNetworkProfile[] = ["mainnet", "testnet-10", "testnet-11", "testnet-12"];
 const RPC_POOL_OVERRIDE_PRESETS: KaspaRpcPoolOverridePreset[] = ["official", "igra", "kasplex"];
@@ -99,6 +101,33 @@ function relativeSeconds(ts: number | null): string {
   if (deltaMs < 60_000) return `${Math.floor(deltaMs / 1_000)}s ago`;
   if (deltaMs < 3_600_000) return `${Math.floor(deltaMs / 60_000)}m ago`;
   return `${Math.floor(deltaMs / 3_600_000)}h ago`;
+}
+
+function summarizeEndpointLabel(endpoint: string | null): string {
+  if (!endpoint) return "unresolved";
+  try {
+    const u = new URL(endpoint);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return endpoint;
+  }
+}
+
+function evaluateRpcConnectorState(
+  rows: KaspaEndpointHealthSnapshot[],
+  activeEndpoint: string | null,
+  now = Date.now(),
+): RpcConnectorState {
+  const row = rows.find((item) => item.base === activeEndpoint) || rows[0];
+  if (!row) return "disconnected";
+  if (row.circuit === "open") return "disconnected";
+  if (!row.lastOkAt) return "disconnected";
+  const okAgeMs = Math.max(0, now - row.lastOkAt);
+  if (okAgeMs <= 60_000) {
+    return row.lastFailAt > row.lastOkAt ? "degraded" : "connected";
+  }
+  if (okAgeMs <= 180_000) return "degraded";
+  return "disconnected";
 }
 
 export function SecurityTab({
@@ -156,6 +185,10 @@ export function SecurityTab({
   const [providerProbeError, setProviderProbeError] = useState<string | null>(null);
   const [providerProbeRows, setProviderProbeRows] = useState<KaspaEndpointHealthSnapshot[]>([]);
   const [providerProbeAt, setProviderProbeAt] = useState<number | null>(null);
+  const [rpcConnectorState, setRpcConnectorState] = useState<RpcConnectorState>("checking");
+  const [rpcConnectorEndpoint, setRpcConnectorEndpoint] = useState<string | null>(null);
+  const [rpcConnectorSource, setRpcConnectorSource] = useState<"local" | "remote" | null>(null);
+  const [rpcConnectorCheckedAt, setRpcConnectorCheckedAt] = useState<number | null>(null);
 
   const rpcPresetLabels: Record<KaspaRpcProviderPreset, string> = {
     official: "OFFICIAL",
@@ -201,10 +234,32 @@ export function SecurityTab({
     () => describeKaspaProviderPreset(network, rpcPreset, customRpcInput.trim() || null, rpcPoolOverrides),
     [network, rpcPreset, customRpcInput, rpcPoolOverrides],
   );
+  const rpcConnectorTone = rpcConnectorState === "connected"
+    ? C.ok
+    : rpcConnectorState === "degraded"
+      ? C.warn
+      : rpcConnectorState === "checking"
+        ? C.dim
+        : C.danger;
+  const rpcConnectorLabel = rpcConnectorState === "connected"
+    ? "CONNECTED"
+    : rpcConnectorState === "degraded"
+      ? "DEGRADED"
+      : rpcConnectorState === "checking"
+        ? "CHECKING"
+        : "DISCONNECTED";
+  const rpcConnectorSourceLabel = rpcConnectorSource === "local"
+    ? "LOCAL NODE"
+    : rpcConnectorSource === "remote"
+      ? "REMOTE RPC"
+      : "UNRESOLVED";
+  const rpcConnectorEndpointLabel = summarizeEndpointLabel(rpcConnectorEndpoint);
   const editablePoolPreset = (rpcPreset === "official" || rpcPreset === "igra" || rpcPreset === "kasplex")
     ? rpcPreset
     : null;
-  const invalidateRpcPoolRuntime = () => invalidateEndpointPoolCache(network);
+  const invalidateRpcPoolRuntime = useCallback(() => {
+    invalidateEndpointPoolCache(network);
+  }, [network]);
 
   const applyLocalNodeSnapshot = (
     statusResponse: LocalNodeStatusResponse | null,
@@ -364,6 +419,10 @@ export function SecurityTab({
     setProviderProbeRows([]);
     setProviderProbeError(null);
     setProviderProbeAt(null);
+    setRpcConnectorState("checking");
+    setRpcConnectorEndpoint(null);
+    setRpcConnectorSource(null);
+    setRpcConnectorCheckedAt(null);
   }, [network, rpcPreset]);
 
   useEffect(() => {
@@ -471,10 +530,10 @@ export function SecurityTab({
     }
   };
 
-  const runProviderProbe = async () => {
-    setProviderProbeBusy(true);
+  const runProviderProbe = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+    if (!silent) setProviderProbeBusy(true);
     setProviderProbeError(null);
-    setProviderProbeRows([]);
     try {
       invalidateRpcPoolRuntime();
       const rows = await probeKaspaEndpointPool(network);
@@ -486,14 +545,46 @@ export function SecurityTab({
         const bFail = b.consecutiveFails || 0;
         return aFail - bFail;
       });
+      const selection = await getKaspaBackendSelection(network).catch(() => null);
+      const activeEndpoint = selection?.activeEndpoint ?? sorted[0]?.base ?? null;
       setProviderProbeRows(sorted);
       setProviderProbeAt(Date.now());
+      setRpcConnectorEndpoint(activeEndpoint);
+      setRpcConnectorSource(selection?.source ?? null);
+      setRpcConnectorState(evaluateRpcConnectorState(sorted, activeEndpoint));
+      setRpcConnectorCheckedAt(Date.now());
     } catch {
       setProviderProbeError("Failed to probe provider feed.");
+      setRpcConnectorState("disconnected");
+      setRpcConnectorEndpoint(null);
+      setRpcConnectorSource(null);
+      setRpcConnectorCheckedAt(Date.now());
     } finally {
-      setProviderProbeBusy(false);
+      if (!silent) setProviderProbeBusy(false);
     }
-  };
+  }, [invalidateRpcPoolRuntime, network]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        await runProviderProbe({ silent: true });
+      } finally {
+        inFlight = false;
+      }
+    };
+    void tick();
+    const timer = setInterval(() => {
+      void tick();
+    }, 20_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [runProviderProbe]);
 
   const parsePoolInput = (raw: string): string[] => {
     const list = raw
@@ -862,6 +953,29 @@ export function SecurityTab({
         <div style={{ fontSize: 8, color: C.dim, lineHeight: 1.5, marginBottom: 7 }}>
           Provider preset: <span style={{ color: C.text, fontWeight: 700 }}>{rpcPresetLabels[rpcPreset]}</span> · Pool size:{" "}
           <span style={{ color: C.text, fontWeight: 700 }}>{providerDescriptor.effectivePool.length}</span>
+        </div>
+        <div style={{ ...insetCard(), marginBottom: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.08em" }}>RPC CONNECTOR</div>
+            <div style={{
+              fontSize: 7,
+              color: rpcConnectorTone,
+              border: `1px solid ${rpcConnectorTone}55`,
+              borderRadius: 4,
+              padding: "2px 6px",
+              letterSpacing: "0.06em",
+              fontWeight: 700,
+            }}>
+              {rpcConnectorLabel}
+            </div>
+          </div>
+          <div style={{ fontSize: 8, color: C.dim, lineHeight: 1.45 }}>
+            Route: <span style={{ color: C.text, fontWeight: 700 }}>{rpcConnectorSourceLabel}</span> · Endpoint:{" "}
+            <span style={{ ...mono, color: C.text }}>{rpcConnectorEndpointLabel}</span>
+          </div>
+          <div style={{ fontSize: 8, color: C.dim, lineHeight: 1.45 }}>
+            Last verified: <span style={{ color: C.text, fontWeight: 700 }}>{relativeSeconds(rpcConnectorCheckedAt)}</span>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
           {(Object.keys(rpcPresetLabels) as KaspaRpcProviderPreset[]).map((preset) => {
