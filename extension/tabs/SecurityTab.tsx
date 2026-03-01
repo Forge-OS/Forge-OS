@@ -884,26 +884,6 @@ export function SecurityTab({
             );
           })}
         </div>
-        <div style={{ ...insetCard(), marginBottom: 8, display: "flex", flexDirection: "column", gap: 5 }}>
-          <div style={{ fontSize: 8, color: C.dim, lineHeight: 1.45 }}>
-            RPC pool runs in background. Endpoint links are hidden in UI.
-          </div>
-          <div style={{ fontSize: 8, color: C.text, lineHeight: 1.4 }}>
-            Active pool size: <span style={{ fontWeight: 700 }}>{providerDescriptor.effectivePool.length}</span>
-          </div>
-          {providerDescriptor.usesOfficialFallback && (
-            <div style={{ fontSize: 8, color: C.warn, lineHeight: 1.45 }}>
-              {rpcPreset === "custom"
-                ? "Custom endpoint not set; currently falling back to official pool."
-                : `${rpcPresetLabels[rpcPreset]} preset pool is empty; currently falling back to official pool.`}
-            </div>
-          )}
-          {providerDescriptor.requiredEnvKeys.length > 0 && (
-            <div style={{ fontSize: 7, color: C.dim, lineHeight: 1.45 }}>
-              Env override keys: {providerDescriptor.requiredEnvKeys.join(", ")}
-            </div>
-          )}
-        </div>
         <input
           value={customRpcInput}
           onChange={(e) => {
