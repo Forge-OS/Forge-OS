@@ -26,6 +26,7 @@
     "test:scheduler:redis": "vitest run tests/server/scheduler*.redis.integration.test.ts",
     "test:perf": "vitest run tests/perf --reporter=verbose",
     "load:pipeline": "node scripts/load-pipeline.mjs",
+    "backtest:quant": "tsx scripts/backtest-quant.ts",
     "bench:tx-policy": "node scripts/benchmark-tx-builder-policy.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
@@ -34,10 +35,13 @@
     "tx-builder:start": "node server/tx-builder/index.mjs",
     "callback-consumer:start": "node server/callback-consumer/index.mjs",
     "audit-signer:start": "node server/audit-signer/index.mjs",
-    "audit-log:verify": "node scripts/verify-audit-log.mjs"
+    "audit-log:verify": "node scripts/verify-audit-log.mjs",
+    "local-node:start": "node server/local-node/index.mjs",
+    "local-node:doctor": "node scripts/local-node-doctor.mjs"
   },
   "dependencies": {
     "@types/qrcode": "^1.5.6",
+    "hash-wasm": "^4.12.0",
     "isomorphic-ws": "^5.0.0",
     "kaspa-wasm": "^0.13.0",
     "qrcode": "^1.5.4",
@@ -52,6 +56,8 @@
     "@types/react-dom": "^18.3.1",
     "@types/webextension-polyfill": "^0.12.5",
     "@vitejs/plugin-react": "^4.3.3",
+    "jsdom": "^28.1.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
     "vite-plugin-web-extension": "^4.5.0",

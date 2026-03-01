@@ -643,13 +643,22 @@ async function fetchHoldings(address: string, network: string): Promise<Array<{ 
   return holdings;
 }
 
+async function pLimit<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = [];
+  const queue = [...tasks];
+  await Promise.all(Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) results.push(await queue.shift()!());
+  }));
+  return results;
+}
+
 export async function fetchKrcPortfolio(address: string, network: string): Promise<KrcPortfolioToken[]> {
   const normalizedAddress = String(address || "").trim();
   if (!normalizedAddress) return [];
   const holdings = await fetchHoldings(normalizedAddress, network);
   if (holdings.length === 0) return [];
 
-  const items = await Promise.all(holdings.map(async (holding): Promise<KrcPortfolioToken | null> => {
+  const items = await pLimit(holdings.map((holding) => async (): Promise<KrcPortfolioToken | null> => {
     try {
       const token = await resolveTokenFromAddress(holding.address, holding.standard, network);
       const market = await fetchMarket(token.address, token.standard, network);
@@ -674,7 +683,7 @@ export async function fetchKrcPortfolio(address: string, network: string): Promi
     } catch {
       return null;
     }
-  }));
+  }), 4);
 
   return items
     .filter((item): item is KrcPortfolioToken => item !== null)

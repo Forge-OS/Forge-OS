@@ -23,6 +23,10 @@ import {
   setSessionPersistence,
 } from "../vault/vault";
 import { fetchDagInfo, getKaspaEndpointHealth, NETWORK_BPS } from "../network/kaspaClient";
+import { connectKaspaWs, disconnectKaspaWs, subscribeUtxosChanged, subscribeDaaScore } from "../network/kaspaWebSocket";
+import { loadPendingTxs } from "../tx/store";
+import { pollConfirmation } from "../tx/broadcast";
+import { recoverPendingSwapSettlements } from "../swap/swap";
 import type { UnlockedSession } from "../vault/types";
 import { signMessage as signManagedMessage } from "../../src/wallet/KaspaWalletManager";
 import { WalletTab } from "../tabs/WalletTab";
@@ -84,6 +88,7 @@ export function Popup() {
   const [tab, setTab] = useState<Tab>("wallet");
   const [walletMode, setWalletMode] = useState<"send" | "receive" | undefined>();
   const [walletModeRequestId, setWalletModeRequestId] = useState(0);
+  const [showSwapOverlay, setShowSwapOverlay] = useState(false);
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
   const [persistUnlockSessionEnabled, setPersistUnlockSessionEnabled] = useState(false);
   const [hidePortfolioBalances, setHidePortfolioBalancesState] = useState(false);
@@ -163,6 +168,20 @@ export function Popup() {
           setSession(existing);
           fetchBalances(existing.address, net);
           setScreen({ type: "unlocked" });
+          // B4: Resume any in-flight tx confirmation loops
+          loadPendingTxs().then((txs) => {
+            txs
+              .filter((tx) => (tx.state === "CONFIRMING" || tx.state === "BROADCASTING") && tx.txId)
+              .forEach((tx) =>
+                pollConfirmation(tx, (updated) => {
+                  if (updated.state === "CONFIRMED" || updated.state === "FAILED") {
+                    fetchBalances(existing.address, net);
+                  }
+                }).catch(() => {}),
+              );
+          }).catch(() => {});
+          // B5: Resume any pending swap settlements
+          recoverPendingSwapSettlements().catch(() => {});
         } else {
           // Show the wallet address on the lock screen so the user knows whose account they're signing into
           const meta = await getWalletMeta();
@@ -261,15 +280,16 @@ export function Popup() {
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
-  // ── Session TTL check ────────────────────────────────────────────────────────
+  // ── Session TTL check + auto-extend on confirmed active session ──────────────
   useEffect(() => {
     if (screen.type !== "unlocked" || !session) return;
     const interval = setInterval(() => {
       const s = getSession();
-      if (!s) handleLock();
+      if (!s) { handleLock(); return; }
+      extendSession(autoLockMinutes, { persistSession: persistUnlockSessionEnabled });
     }, 30_000);
     return () => clearInterval(interval);
-  }, [screen.type, session]);
+  }, [screen.type, session, autoLockMinutes, persistUnlockSessionEnabled]);
 
   const syncEndpointHealth = useCallback((targetNetwork: string) => {
     const snapshots = getKaspaEndpointHealth(targetNetwork) as Array<{
@@ -356,6 +376,24 @@ export function Popup() {
     poll();
     const id = setInterval(poll, 15_000);
     return () => clearInterval(id);
+  }, [screen.type, session?.address, network, fetchBalances]);
+
+  // ── WebSocket real-time subscriptions (C2) ───────────────────────────────────
+  useEffect(() => {
+    if (screen.type !== "unlocked" || !session?.address) return;
+    connectKaspaWs(network).catch(() => {});
+    const unsubUtxo = subscribeUtxosChanged(session.address, () => {
+      fetchBalances(session.address, network);
+    });
+    const unsubDaa = subscribeDaaScore((score) => {
+      setDagScore(score);
+      setDagUpdatedAt(Date.now());
+    });
+    return () => {
+      unsubUtxo();
+      unsubDaa();
+      disconnectKaspaWs().catch(() => {});
+    };
   }, [screen.type, session?.address, network, fetchBalances]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -657,10 +695,7 @@ export function Popup() {
   const feedUpdatedLabel = latestFeedAt > 0
     ? new Date(latestFeedAt).toLocaleTimeString([], { hour12: false })
     : "never";
-  const activeEndpointLabel = (() => {
-    if (!activeRpcEndpoint) return "endpoint unknown";
-    try { return new URL(activeRpcEndpoint).host; } catch { return activeRpcEndpoint; }
-  })();
+  const rpcBackendLabel = activeRpcEndpoint ? "ACTIVE" : "UNAVAILABLE";
 
   // Network badge: mainnet = green (ok), testnets = amber (warn)
   const netColor = isMainnet ? C.ok : C.warn;
@@ -808,7 +843,7 @@ export function Popup() {
                   setWalletModeRequestId((id) => id + 1);
                 },
               },
-              { label: "SWAP",  action: () => setTab("swap") },
+              { label: "SWAP",  action: () => setShowSwapOverlay(true) },
             ].map(btn => (
               <button
                 key={btn.label}
@@ -837,6 +872,74 @@ export function Popup() {
               fontWeight: 700, cursor: "pointer", ...mono, letterSpacing: "0.08em",
             }}
           >OPEN FORGE-OS →</button>
+        </div>
+      )}
+
+      {/* Swap overlay (hero action) */}
+      {showSwapOverlay && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 40,
+            background: "rgba(3,7,12,0.78)",
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "center",
+            padding: "10px 8px 12px",
+            backdropFilter: "blur(1px)",
+          }}
+          onClick={(event) => {
+            if (event.target !== event.currentTarget) return;
+            setShowSwapOverlay(false);
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: EXTENSION_POPUP_BASE_WIDTH - 10,
+              maxHeight: "100%",
+              borderRadius: 14,
+              border: `1px solid ${C.border}`,
+              background: "linear-gradient(165deg, rgba(8,13,20,0.98) 0%, rgba(5,9,15,0.98) 100%)",
+              boxShadow: "0 18px 34px rgba(0,0,0,0.45)",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "10px 12px",
+                borderBottom: `1px solid ${C.border}`,
+              }}
+            >
+              <div style={{ fontSize: 10, color: C.accent, fontWeight: 700, letterSpacing: "0.1em", ...mono }}>
+                SWAP
+              </div>
+              <button
+                onClick={() => setShowSwapOverlay(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: C.dim,
+                  fontSize: 14,
+                  cursor: "pointer",
+                  ...mono,
+                }}
+                aria-label="Close swap overlay"
+                title="Close swap overlay"
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ overflowY: "auto", padding: "8px 8px 10px", flex: 1 }}>
+              <SwapTab />
+            </div>
+          </div>
         </div>
       )}
 
@@ -903,7 +1006,7 @@ export function Popup() {
             </span>
           )}
           <span style={{ fontSize: 8, color: C.dim, letterSpacing: "0.04em" }}>
-            · RPC {activeEndpointLabel}
+            · RPC {rpcBackendLabel}
           </span>
           <span style={{ fontSize: 8, color: C.dim, letterSpacing: "0.04em" }}>
             · UPDATE {feedUpdatedLabel}

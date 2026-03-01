@@ -1,4 +1,5 @@
 /// <reference path="../../chrome.d.ts" />
+import { useState } from "react";
 import { C, mono } from "../../../src/tokens";
 import { shortAddr } from "../../../src/helpers";
 import {
@@ -7,6 +8,7 @@ import {
   EXTENSION_POPUP_UI_SCALE,
 } from "../layout";
 import { popupShellBackground } from "../surfaces";
+import { addConnectedSite } from "../../shared/storage";
 
 interface Props {
   address: string;
@@ -18,6 +20,14 @@ interface Props {
 
 export function ConnectApprovalScreen({ address, network, origin, onApprove, onReject }: Props) {
   const displayOrigin = origin ?? "forge-os.xyz";
+  const [rememberSite, setRememberSite] = useState(false);
+
+  function handleApprove() {
+    if (rememberSite && origin) {
+      addConnectedSite(origin, { address, network, connectedAt: Date.now() }).catch(() => {});
+    }
+    onApprove();
+  }
 
   return (
     <div style={{
@@ -120,6 +130,17 @@ export function ConnectApprovalScreen({ address, network, origin, onApprove, onR
           </div>
         </div>
 
+        {/* Remember site toggle */}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 10, color: C.dim }}>
+          <input
+            type="checkbox"
+            checked={rememberSite}
+            onChange={(e) => setRememberSite(e.target.checked)}
+            style={{ accentColor: C.accent, width: 13, height: 13, cursor: "pointer" }}
+          />
+          Remember this site (skip approval next time)
+        </label>
+
         {/* Action buttons */}
         <div style={{ display: "flex", gap: 10, marginTop: 2 }}>
           <button
@@ -141,7 +162,7 @@ export function ConnectApprovalScreen({ address, network, origin, onApprove, onR
             REJECT
           </button>
           <button
-            onClick={onApprove}
+            onClick={handleApprove}
             style={{
               flex: 2,
               background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,

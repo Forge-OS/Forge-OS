@@ -45,6 +45,7 @@ function normalizeRecord(value: unknown): SwapSettlementRecord | null {
     id,
     routeSource,
     state,
+    network: typeof v.network === "string" && v.network ? v.network : "mainnet",
     createdAt: typeof v.createdAt === "number" && Number.isFinite(v.createdAt) ? v.createdAt : Date.now(),
     updatedAt: typeof v.updatedAt === "number" && Number.isFinite(v.updatedAt) ? v.updatedAt : Date.now(),
     txHash: typeof v.txHash === "string" ? v.txHash : null,

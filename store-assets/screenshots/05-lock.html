@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Forge-OS Screenshot 5 — Lock Screen</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1280px;height:800px;background:#05070A;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+  body::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 800px 500px at 640px 400px,rgba(57,221,182,0.06) 0%,transparent 70%);pointer-events:none}
+  body::after{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(57,221,182,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(57,221,182,0.03) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+
+  .scene{display:flex;align-items:center;gap:80px;z-index:1;position:relative}
+  .copy{width:380px}
+  .logo{display:flex;align-items:center;gap:12px;margin-bottom:36px}
+  .logo-mark{width:44px;height:44px;background:#39DDB6;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#05070A}
+  .logo-name{font-size:26px;font-weight:700;color:#fff;letter-spacing:0.5px}
+  .logo-name span{color:#39DDB6}
+  .tagline{font-size:38px;font-weight:700;color:#fff;line-height:1.15;margin-bottom:20px;letter-spacing:-0.5px}
+  .tagline em{color:#39DDB6;font-style:normal}
+  .sub{font-size:15px;color:rgba(255,255,255,0.5);line-height:1.6;margin-bottom:30px}
+  .props{display:flex;flex-direction:column;gap:12px}
+  .prop{display:flex;align-items:center;gap:14px;padding:12px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:10px}
+  .prop-icon{width:34px;height:34px;background:rgba(57,221,182,0.1);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+  .prop-text h4{font-size:12px;font-weight:600;color:#fff;margin-bottom:2px}
+  .prop-text p{font-size:10px;color:rgba(255,255,255,0.35)}
+
+  .popup-wrap{position:relative}
+  .popup-glow{position:absolute;inset:-30px;background:radial-gradient(ellipse at center,rgba(57,221,182,0.12),transparent 70%);border-radius:50%;pointer-events:none}
+  .popup{width:360px;height:560px;background:#0D1117;border:1px solid rgba(57,221,182,0.2);border-radius:18px;box-shadow:0 40px 120px rgba(0,0,0,0.8);overflow:hidden;display:flex;flex-direction:column}
+
+  .wb{flex:1;padding:40px 28px 28px;display:flex;flex-direction:column;align-items:center;gap:16px;overflow:hidden}
+
+  .lock-ring{width:80px;height:80px;border-radius:50%;border:2px solid rgba(57,221,182,0.3);background:rgba(57,221,182,0.06);display:flex;align-items:center;justify-content:center;font-size:36px;margin-bottom:4px}
+
+  .wlcm{font-size:18px;font-weight:700;color:#fff;text-align:center;letter-spacing:-0.3px}
+  .wlcm-sub{font-size:12px;color:rgba(255,255,255,0.4);text-align:center}
+  .addr-chip{padding:5px 12px;background:rgba(57,221,182,0.08);border:1px solid rgba(57,221,182,0.2);border-radius:20px;font-size:10px;color:#39DDB6;font-family:monospace}
+
+  .pw-label{font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.8px;align-self:flex-start;width:100%}
+  .pw-field{width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(57,221,182,0.3);border-radius:10px;padding:13px 16px;font-size:14px;color:rgba(255,255,255,0.4);letter-spacing:4px}
+
+  .unlock-btn{width:100%;padding:14px;background:#39DDB6;border:none;border-radius:12px;font-size:14px;font-weight:700;color:#05070A;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;text-align:center;margin-top:4px}
+
+  .forgot{font-size:11px;color:rgba(255,255,255,0.25);text-align:center;cursor:pointer;margin-top:4px}
+  .forgot span{color:rgba(57,221,182,0.5)}
+
+  .vers{font-size:9px;color:rgba(255,255,255,0.15);text-align:center;margin-top:auto}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="copy">
+    <div class="logo">
+      <div class="logo-mark">F</div>
+      <div class="logo-name">Forge<span>.OS</span></div>
+    </div>
+    <div class="tagline">Auto-Lock<br><em>Protects You.</em></div>
+    <div class="sub">Wallet locks automatically after inactivity. Your encrypted vault stays sealed until your password unlocks it.</div>
+    <div class="props">
+      <div class="prop">
+        <div class="prop-icon">⏱</div>
+        <div class="prop-text">
+          <h4>Configurable Auto-Lock</h4>
+          <p>Default 15 minutes — adjustable in security settings</p>
+        </div>
+      </div>
+      <div class="prop">
+        <div class="prop-icon">🔐</div>
+        <div class="prop-text">
+          <h4>In-Memory Session Only</h4>
+          <p>Decrypted key material never persisted to disk</p>
+        </div>
+      </div>
+      <div class="prop">
+        <div class="prop-icon">🔄</div>
+        <div class="prop-text">
+          <h4>Instant Recovery</h4>
+          <p>Re-enter password to restore session in under a second</p>
+        </div>
+      </div>
+      <div class="prop">
+        <div class="prop-icon">🧩</div>
+        <div class="prop-text">
+          <h4>BIP39 Backup</h4>
+          <p>12 or 24-word recovery phrase — standard and portable</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="popup-wrap">
+    <div class="popup-glow"></div>
+    <div class="popup">
+      <div class="wb">
+        <div class="lock-ring">🔐</div>
+        <div class="wlcm">WELCOME BACK</div>
+        <div class="wlcm-sub">Enter your password to sign in</div>
+        <div class="addr-chip">kaspa:qpk2r9…vx9y</div>
+
+        <div class="pw-label" style="margin-top:8px">Password</div>
+        <div class="pw-field">••••••••••••</div>
+
+        <div class="unlock-btn">Unlock Wallet</div>
+        <div class="forgot">Forgot password? <span>Reset wallet</span></div>
+
+        <div class="vers">Forge-OS v1.0.0 · AES-256-GCM</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

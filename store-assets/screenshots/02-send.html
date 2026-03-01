@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Forge-OS Screenshot 2 — Send KAS</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1280px;height:800px;background:#05070A;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+  body::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 800px 500px at 640px 400px,rgba(57,221,182,0.06) 0%,transparent 70%);pointer-events:none}
+  body::after{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(57,221,182,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(57,221,182,0.03) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+
+  .scene{display:flex;align-items:center;gap:80px;z-index:1;position:relative}
+  .copy{width:380px}
+  .logo{display:flex;align-items:center;gap:12px;margin-bottom:36px}
+  .logo-mark{width:44px;height:44px;background:#39DDB6;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#05070A}
+  .logo-name{font-size:26px;font-weight:700;color:#fff;letter-spacing:0.5px}
+  .logo-name span{color:#39DDB6}
+  .tagline{font-size:38px;font-weight:700;color:#fff;line-height:1.15;margin-bottom:20px;letter-spacing:-0.5px}
+  .tagline em{color:#39DDB6;font-style:normal}
+  .sub{font-size:16px;color:rgba(255,255,255,0.5);line-height:1.6;margin-bottom:36px}
+  .features{display:flex;flex-direction:column;gap:16px}
+  .feat{display:flex;align-items:flex-start;gap:14px}
+  .feat-icon{width:36px;height:36px;background:rgba(57,221,182,0.1);border:1px solid rgba(57,221,182,0.2);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;margin-top:1px}
+  .feat-text h4{font-size:14px;font-weight:600;color:#fff;margin-bottom:3px}
+  .feat-text p{font-size:12px;color:rgba(255,255,255,0.4);line-height:1.4}
+
+  .popup-wrap{position:relative}
+  .popup-glow{position:absolute;inset:-30px;background:radial-gradient(ellipse at center,rgba(57,221,182,0.12),transparent 70%);border-radius:50%;pointer-events:none}
+  .popup{width:360px;height:560px;background:#0D1117;border:1px solid rgba(57,221,182,0.2);border-radius:18px;box-shadow:0 40px 120px rgba(0,0,0,0.8);overflow:hidden;display:flex;flex-direction:column}
+
+  .ph{background:#0D1117;padding:14px 18px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .ph-back{width:28px;height:28px;background:rgba(255,255,255,0.06);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;color:rgba(255,255,255,0.6);cursor:pointer}
+  .ph-title{font-size:15px;font-weight:700;color:#fff;flex:1;text-align:center}
+  .ph-spacer{width:28px}
+
+  .wb{flex:1;padding:18px 18px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+
+  .field-label{font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px}
+  .field{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:11px 14px;font-size:13px;color:#fff;font-family:monospace}
+  .field.active{border-color:rgba(57,221,182,0.4);background:rgba(57,221,182,0.04)}
+  .field-hint{font-size:10px;color:rgba(57,221,182,0.5);margin-top:4px}
+
+  .amount-row{display:flex;gap:10px;align-items:flex-end}
+  .amount-input{flex:1}
+  .amount-max{padding:8px 12px;background:rgba(57,221,182,0.1);border:1px solid rgba(57,221,182,0.25);border-radius:8px;font-size:11px;color:#39DDB6;font-weight:600;cursor:pointer;white-space:nowrap}
+
+  .fee-row{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:6px}
+  .fee-line{display:flex;justify-content:space-between;align-items:center}
+  .fee-key{font-size:10px;color:rgba(255,255,255,0.35)}
+  .fee-val{font-size:11px;color:rgba(255,255,255,0.6);font-family:monospace}
+  .fee-line.total .fee-key{color:rgba(255,255,255,0.6);font-weight:600}
+  .fee-line.total .fee-val{color:#fff;font-weight:700}
+  .fee-sep{border:none;border-top:1px solid rgba(255,255,255,0.06);margin:2px 0}
+
+  .warn{background:rgba(255,200,50,0.06);border:1px solid rgba(255,200,50,0.2);border-radius:10px;padding:10px 14px;font-size:11px;color:rgba(255,200,50,0.8);line-height:1.4}
+
+  .send-btn{margin-top:auto;padding:14px;background:#39DDB6;border:none;border-radius:12px;font-size:14px;font-weight:700;color:#05070A;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;text-align:center}
+
+  .pf{padding:10px 18px;border-top:1px solid rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:space-between}
+  .pf-net{font-size:9px;color:rgba(57,221,182,0.5);font-family:monospace}
+  .pf-bps{font-size:9px;color:rgba(255,255,255,0.25)}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="copy">
+    <div class="logo">
+      <div class="logo-mark">F</div>
+      <div class="logo-name">Forge<span>.OS</span></div>
+    </div>
+    <div class="tagline">Send KAS in<br><em>Seconds.</em></div>
+    <div class="sub">Two-pass fee refinement, dry-run validation, and full coin selection — all before you confirm.</div>
+    <div class="features">
+      <div class="feat">
+        <div class="feat-icon">⚡</div>
+        <div class="feat-text">
+          <h4>10 BPS Confirmation</h4>
+          <p>Kaspa confirms at 10 blocks per second. Transactions settle in under a minute.</p>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="feat-icon">🔍</div>
+        <div class="feat-text">
+          <h4>Dry-Run Validation</h4>
+          <p>5 checks before signing: UTXO availability, fee correctness, balance, address, and network match.</p>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="feat-icon">🏛</div>
+        <div class="feat-text">
+          <h4>0.3% Platform Fee</h4>
+          <p>Minimal fee funds protocol development. Min 0.001 KAS, max 1 KAS.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="popup-wrap">
+    <div class="popup-glow"></div>
+    <div class="popup">
+      <div class="ph">
+        <div class="ph-back">←</div>
+        <div class="ph-title">Send KAS</div>
+        <div class="ph-spacer"></div>
+      </div>
+      <div class="wb">
+        <div>
+          <div class="field-label">Recipient Address</div>
+          <div class="field active" style="font-size:11px;word-break:break-all">kaspa:qp9a7r3xzkvlmn8pq2fwt4y6...</div>
+          <div class="field-hint">✓ Valid Kaspa mainnet address</div>
+        </div>
+        <div>
+          <div class="field-label">Amount</div>
+          <div class="amount-row">
+            <div class="amount-input">
+              <div class="field active">500 KAS</div>
+            </div>
+            <div class="amount-max">MAX</div>
+          </div>
+          <div class="field-hint">≈ $49.92 USD · Balance: 12,480.50 KAS</div>
+        </div>
+        <div class="fee-row">
+          <div class="fee-line"><span class="fee-key">NETWORK FEE → miners</span><span class="fee-val">0.00023 KAS</span></div>
+          <div class="fee-line"><span class="fee-key">PLATFORM FEE → treasury</span><span class="fee-val">0.50000 KAS</span></div>
+          <hr class="fee-sep">
+          <div class="fee-line total"><span class="fee-key">TOTAL COST</span><span class="fee-val">500.50023 KAS</span></div>
+        </div>
+        <div class="warn">⚠ Dry-run passed — 3 UTXOs selected, fee verified against live network rate.</div>
+        <div class="send-btn">Confirm &amp; Send</div>
+      </div>
+      <div class="pf">
+        <div class="pf-net">api.kaspa.org</div>
+        <div class="pf-bps">10 BPS · DAA 42.1M</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

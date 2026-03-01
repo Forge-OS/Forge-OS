@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Forge-OS Screenshot 3 — Security</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1280px;height:800px;background:#05070A;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+  body::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 800px 500px at 640px 400px,rgba(57,221,182,0.06) 0%,transparent 70%);pointer-events:none}
+  body::after{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(57,221,182,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(57,221,182,0.03) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+
+  .scene{display:flex;align-items:center;gap:80px;z-index:1;position:relative}
+  .copy{width:380px}
+  .logo{display:flex;align-items:center;gap:12px;margin-bottom:36px}
+  .logo-mark{width:44px;height:44px;background:#39DDB6;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#05070A}
+  .logo-name{font-size:26px;font-weight:700;color:#fff;letter-spacing:0.5px}
+  .logo-name span{color:#39DDB6}
+  .tagline{font-size:38px;font-weight:700;color:#fff;line-height:1.15;margin-bottom:20px;letter-spacing:-0.5px}
+  .tagline em{color:#39DDB6;font-style:normal}
+  .sub{font-size:15px;color:rgba(255,255,255,0.5);line-height:1.6;margin-bottom:30px}
+  .stack{display:flex;flex-direction:column;gap:10px}
+  .stack-item{display:flex;align-items:center;gap:14px;padding:12px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:10px}
+  .stack-icon{width:34px;height:34px;background:rgba(57,221,182,0.1);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+  .stack-label{flex:1}
+  .stack-label h4{font-size:12px;font-weight:700;color:#fff;margin-bottom:1px}
+  .stack-label p{font-size:10px;color:rgba(255,255,255,0.35)}
+  .stack-check{color:#39DDB6;font-size:16px}
+
+  .popup-wrap{position:relative}
+  .popup-glow{position:absolute;inset:-30px;background:radial-gradient(ellipse at center,rgba(57,221,182,0.12),transparent 70%);border-radius:50%;pointer-events:none}
+  .popup{width:360px;height:560px;background:#0D1117;border:1px solid rgba(57,221,182,0.2);border-radius:18px;box-shadow:0 40px 120px rgba(0,0,0,0.8);overflow:hidden;display:flex;flex-direction:column}
+
+  .ph{background:#0D1117;padding:14px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .ph-brand{font-size:15px;font-weight:700;color:#fff}
+  .ph-brand span{color:#39DDB6}
+  .nav{display:flex;background:#090D13;border-bottom:1px solid rgba(255,255,255,0.05)}
+  .nav-item{flex:1;padding:10px 0;text-align:center;font-size:10px;font-weight:600;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.5px}
+  .nav-item.active{color:#39DDB6;border-bottom:2px solid #39DDB6}
+
+  .wb{flex:1;padding:18px 18px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+  .sec-title{font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:1px}
+  .sec-card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:14px 14px}
+  .sec-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .sec-row:last-child{margin-bottom:0}
+  .sec-key{font-size:11px;color:rgba(255,255,255,0.5)}
+  .sec-val{font-size:11px;font-weight:600;color:#39DDB6;font-family:monospace}
+
+  .lock-btn{padding:11px;background:rgba(255,80,80,0.08);border:1px solid rgba(255,80,80,0.2);border-radius:10px;font-size:12px;font-weight:700;color:#FF5050;text-transform:uppercase;letter-spacing:0.5px;text-align:center;cursor:pointer}
+  .reveal-btn{padding:11px;background:rgba(57,221,182,0.08);border:1px solid rgba(57,221,182,0.2);border-radius:10px;font-size:12px;font-weight:700;color:#39DDB6;text-transform:uppercase;letter-spacing:0.5px;text-align:center;cursor:pointer}
+  .chg-btn{padding:11px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:10px;font-size:12px;font-weight:700;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.5px;text-align:center;cursor:pointer}
+
+  .autolock-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:10px}
+  .autolock-key{font-size:11px;color:rgba(255,255,255,0.5)}
+  .autolock-val{font-size:11px;color:#39DDB6;font-weight:600}
+
+  .pf{padding:10px 18px;border-top:1px solid rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:space-between}
+  .pf-net{font-size:9px;color:rgba(57,221,182,0.5);font-family:monospace}
+  .pf-bps{font-size:9px;color:rgba(255,255,255,0.25)}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="copy">
+    <div class="logo">
+      <div class="logo-mark">F</div>
+      <div class="logo-name">Forge<span>.OS</span></div>
+    </div>
+    <div class="tagline">Military-Grade<br><em>Security.</em></div>
+    <div class="sub">Your seed phrase never touches a server. Encrypted locally with AES-256-GCM. 600,000 PBKDF2 rounds.</div>
+    <div class="stack">
+      <div class="stack-item">
+        <div class="stack-icon">🔐</div>
+        <div class="stack-label">
+          <h4>AES-256-GCM Vault</h4>
+          <p>Seed encrypted at rest in chrome.storage.local</p>
+        </div>
+        <div class="stack-check">✓</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-icon">🔑</div>
+        <div class="stack-label">
+          <h4>PBKDF2-SHA256 · 600k iters</h4>
+          <p>OWASP 2023 compliant key derivation</p>
+        </div>
+        <div class="stack-check">✓</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-icon">⏱</div>
+        <div class="stack-label">
+          <h4>Auto-Lock Timer</h4>
+          <p>Session expires after configurable inactivity period</p>
+        </div>
+        <div class="stack-check">✓</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-icon">🛡</div>
+        <div class="stack-label">
+          <h4>No Plaintext in Storage</h4>
+          <p>Mnemonic never written unencrypted anywhere</p>
+        </div>
+        <div class="stack-check">✓</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="popup-wrap">
+    <div class="popup-glow"></div>
+    <div class="popup">
+      <div class="ph">
+        <div class="ph-brand">Forge<span>.OS</span></div>
+        <div style="font-size:10px;color:rgba(57,221,182,0.6);font-family:monospace">UNLOCKED</div>
+      </div>
+      <div class="nav">
+        <div class="nav-item">Wallet</div>
+        <div class="nav-item">Agents</div>
+        <div class="nav-item">Swap</div>
+        <div class="nav-item active">Security</div>
+      </div>
+      <div class="wb">
+        <div class="sec-title">Vault Encryption</div>
+        <div class="sec-card">
+          <div class="sec-row"><span class="sec-key">Algorithm</span><span class="sec-val">AES-256-GCM</span></div>
+          <div class="sec-row"><span class="sec-key">KDF</span><span class="sec-val">PBKDF2-SHA256</span></div>
+          <div class="sec-row"><span class="sec-key">Iterations</span><span class="sec-val">600,000</span></div>
+          <div class="sec-row"><span class="sec-key">Salt</span><span class="sec-val">32 bytes (CSPRNG)</span></div>
+          <div class="sec-row"><span class="sec-key">Derivation</span><span class="sec-val">m/44'/111'/0'/0/0</span></div>
+        </div>
+        <div class="autolock-row">
+          <span class="autolock-key">Auto-Lock</span>
+          <span class="autolock-val">15 minutes</span>
+        </div>
+        <div class="reveal-btn">View Recovery Phrase</div>
+        <div class="chg-btn">Change Password</div>
+        <div class="lock-btn">Lock Wallet Now</div>
+      </div>
+      <div class="pf">
+        <div class="pf-net">api.kaspa.org</div>
+        <div class="pf-bps">10 BPS · DAA 42.1M</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -37,7 +37,7 @@ function applyFeePolicy(baseFee: bigint): bigint {
 // ── Platform (treasury) fee ───────────────────────────────────────────────────
 // Set TREASURY_ADDRESS to a valid Kaspa address to enable the platform fee.
 // Leave empty to disable (no fee output will be added).
-const TREASURY_ADDRESS = ""; // TODO: set to Forge-OS treasury kaspa: address
+const TREASURY_ADDRESS = "kaspa:qpv7fcvdlz6th4hqjtm9qkkms2dw0raem963x3hm8glu3kjgj7922vy69hv85";
 const PLATFORM_FEE_BPS = 30;               // 0.3 % of send amount
 const MIN_PLATFORM_FEE_SOMPI = 100_000n;   // 0.001 KAS floor
 const MAX_PLATFORM_FEE_SOMPI = 100_000_000n; // 1 KAS ceiling
@@ -116,6 +116,7 @@ export async function buildTransaction(
   }
 
   const changeAmount = inputTotal - spendSompi - refinedFee;
+  if (changeAmount < 0n) throw new Error("INSUFFICIENT_FUNDS");
   const outputs: TxOutput[] = [{ address: toAddress, amount: amountSompi }];
 
   // Add treasury output when platform fee is active
@@ -180,10 +181,21 @@ export async function buildKaspaWasmTx(
   });
 
   // Build payment outputs
-  const outputList = tx.outputs.map((o: TxOutput) => ({
+  const outputList: Array<Record<string, unknown>> = tx.outputs.map((o: TxOutput) => ({
     address: o.address,
     amount: o.amount,
   }));
+
+  // OP_RETURN output (zero-value, script: 6a<payload>)
+  if (tx.opReturnHex) {
+    outputList.push({
+      value: 0n,
+      scriptPublicKey: {
+        version: 0,
+        scriptPublicKey: `6a${tx.opReturnHex}`,
+      },
+    });
+  }
 
   // Build generator config
   const generatorConfig: Record<string, unknown> = {
@@ -213,4 +225,103 @@ export async function buildKaspaWasmTx(
   }
 
   return pending;
+}
+
+// ── Batch transaction (multi-output) ─────────────────────────────────────────
+
+export interface BatchTxOptions {
+  agentJobId?: string;
+  opReturnHex?: string;
+}
+
+/**
+ * Build a multi-output batch transaction.
+ * All recipient outputs are included; one treasury output maximum (not per-recipient).
+ * Supports optional OP_RETURN receipt anchoring via opReturnHex.
+ */
+export async function buildBatchTransaction(
+  fromAddress: string,
+  recipients: Array<{ address: string; amountKas: number }>,
+  network: string,
+  opts: BatchTxOptions = {},
+): Promise<PendingTx> {
+  if (!recipients.length) throw new Error("BATCH_EMPTY: at least one recipient required");
+
+  const recipientOutputs: TxOutput[] = recipients.map((r) => ({
+    address: r.address,
+    amount: kasToSompi(r.amountKas),
+  }));
+
+  const totalRecipientSompi = recipientOutputs.reduce((s, o) => s + o.amount, 0n);
+  if (totalRecipientSompi <= 0n) throw new Error("AMOUNT_TOO_SMALL");
+
+  // Single platform fee on total batch send (not per-recipient)
+  const platformFee = calcPlatformFee(totalRecipientSompi);
+  const spendSompi = totalRecipientSompi + (platformFee ?? 0n);
+
+  // Output count: recipients + change + optional treasury + optional OP_RETURN
+  const outputCount = recipientOutputs.length
+    + 1  // change
+    + (platformFee ? 1 : 0)
+    + (opts.opReturnHex ? 1 : 0);
+
+  const lockedKeys = await getLockedUtxoKeys(fromAddress);
+  const utxoSet = await getOrSyncUtxos(fromAddress, network);
+
+  const preliminary = applyFeePolicy(await estimateFee(1, outputCount, network));
+  const { selected, total } = selectUtxos(utxoSet.utxos, spendSompi, preliminary, lockedKeys);
+
+  const refinedFee = applyFeePolicy(await estimateFee(selected.length, outputCount, network));
+  let inputs = selected;
+  let inputTotal = total;
+  if (inputTotal < spendSompi + refinedFee) {
+    const refined = selectUtxos(utxoSet.utxos, spendSompi, refinedFee, lockedKeys);
+    inputs = refined.selected;
+    inputTotal = refined.total;
+  }
+
+  const changeAmount = inputTotal - spendSompi - refinedFee;
+  if (changeAmount < 0n) throw new Error("INSUFFICIENT_FUNDS");
+
+  const outputs: TxOutput[] = [...recipientOutputs];
+  if (platformFee && TREASURY_ADDRESS) {
+    outputs.push({ address: TREASURY_ADDRESS, amount: platformFee });
+  }
+
+  const changeOutput: TxOutput | null =
+    changeAmount > 0n ? { address: fromAddress, amount: changeAmount } : null;
+
+  return {
+    id: crypto.randomUUID(),
+    state: "BUILDING",
+    fromAddress,
+    network,
+    inputs,
+    outputs,
+    changeOutput,
+    fee: refinedFee,
+    platformFee: platformFee ?? undefined,
+    builtAt: Date.now(),
+    agentJobId: opts.agentJobId,
+    opReturnHex: opts.opReturnHex,
+  };
+}
+
+/**
+ * Encode an agent job receipt as a hex string for OP_RETURN anchoring.
+ * Format: "FGOS" magic (4) + jobId slice (16 bytes) + status byte + DAA score (8 bytes LE)
+ * Total: 29 bytes — well within the 80-byte OP_RETURN limit.
+ */
+export function encodeAgentReceipt(
+  jobId: string,
+  status: "ok" | "fail",
+  daaScore?: bigint,
+): string {
+  const magic = Array.from("FGOS").map((c) => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+  const jobBytes = new TextEncoder().encode(jobId.slice(0, 16));
+  const jobHex = Array.from(jobBytes).map((b) => b.toString(16).padStart(2, "0")).join("").padEnd(32, "0");
+  const statusByte = status === "ok" ? "01" : "00";
+  const score = daaScore ?? 0n;
+  const scoreHex = score.toString(16).padStart(16, "0");
+  return `${magic}${jobHex}${statusByte}${scoreHex}`;
 }

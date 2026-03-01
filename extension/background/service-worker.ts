@@ -2,6 +2,10 @@
 import { EXTENSION_POPUP_WINDOW_HEIGHT, EXTENSION_POPUP_WINDOW_WIDTH } from "../popup/layout";
 import { prefetchKrcPortfolioForAddress } from "../portfolio/krcPortfolio";
 import { sanitizeAgentsSnapshot } from "../shared/agentSync";
+import { fetchBalance } from "../network/kaspaClient";
+import { loadPendingTxs, updatePendingTx } from "../tx/store";
+import { recoverPendingSwapSettlements } from "../swap/swap";
+import { getConnectedSites } from "../shared/storage";
 import {
   countOriginRequests,
   dropRequestsForTab,
@@ -33,13 +37,6 @@ import {
 
 export {};
 
-const KAS_API_BY_NETWORK: Record<string, string> = {
-  mainnet: "https://api.kaspa.org",
-  "testnet-10": "https://api-tn10.kaspa.org",
-  "testnet-11": "https://api-tn11.kaspa.org",
-  "testnet-12": "https://api-tn12.kaspa.org",
-};
-const KAS_SOMPI = 1e8;
 const BALANCE_ALARM = "forgeos-balance-poll";
 const AUTOLOCK_ALARM = "forgeos-autolock";
 const PENDING_SWEEP_ALARM = "forgeos-pending-sweep";
@@ -190,14 +187,9 @@ async function updateBadge(): Promise<void> {
     return;
   }
 
-  const endpoint = KAS_API_BY_NETWORK[meta.network ?? "mainnet"] ?? KAS_API_BY_NETWORK.mainnet;
   try {
-    const res = await fetch(
-      `${endpoint}/addresses/${encodeURIComponent(meta.address)}/balance`,
-    );
-    if (!res.ok) return;
-    const data = await res.json() as { balance?: number };
-    const kas = (data?.balance ?? 0) / KAS_SOMPI;
+    const sompi = await fetchBalance(meta.address, meta.network ?? "mainnet");
+    const kas = Number(sompi) / 1e8;
     const label =
       kas >= 1_000_000 ? `${(kas / 1_000_000).toFixed(1)}M`
       : kas >= 1_000   ? `${(kas / 1_000).toFixed(1)}K`
@@ -387,13 +379,13 @@ function ensureBalanceAlarm(): void {
 
 function ensurePendingSweepAlarm(): void {
   chrome.alarms.get(PENDING_SWEEP_ALARM, (alarm) => {
-    if (!alarm) chrome.alarms.create(PENDING_SWEEP_ALARM, { periodInMinutes: 1 });
+    if (!alarm) chrome.alarms.create(PENDING_SWEEP_ALARM, { delayInMinutes: 0.2, periodInMinutes: 1 });
   });
 }
 
 function ensureKrcPrefetchAlarm(): void {
   chrome.alarms.get(KRC_PREFETCH_ALARM, (alarm) => {
-    if (!alarm) chrome.alarms.create(KRC_PREFETCH_ALARM, { periodInMinutes: 1 });
+    if (!alarm) chrome.alarms.create(KRC_PREFETCH_ALARM, { delayInMinutes: 0.5, periodInMinutes: 1 });
   });
 }
 
@@ -415,6 +407,7 @@ chrome.runtime.onInstalled.addListener(() => {
   ensureKrcPrefetchAlarm();
   updatePendingBadge().catch(() => {});
   prefetchKrcPortfolioFromMeta().catch(() => {});
+  recoverPendingSwapSettlements().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -423,6 +416,7 @@ chrome.runtime.onStartup.addListener(() => {
   ensureKrcPrefetchAlarm();
   updatePendingBadge().catch(() => {});
   prefetchKrcPortfolioFromMeta().catch(() => {});
+  recoverPendingSwapSettlements().catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -442,6 +436,19 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === PENDING_SWEEP_ALARM) {
     queuePendingMutation(async () => {
       await sweepExpiredPendingRequests();
+
+      // B1: Expire BROADCASTING txs that have been stuck > 15 minutes
+      const BROADCAST_TIMEOUT_MS = 15 * 60_000;
+      const allTxs = await loadPendingTxs().catch(() => []);
+      const stale = allTxs.filter(
+        (tx) => tx.state === "BROADCASTING" && Date.now() - tx.builtAt > BROADCAST_TIMEOUT_MS,
+      );
+      for (const tx of stale) {
+        await updatePendingTx({ ...tx, state: "FAILED", error: "CONFIRM_TIMEOUT: no confirmation in 15 minutes" }).catch(() => {});
+      }
+
+      // B5: Resume any in-flight swap settlements
+      recoverPendingSwapSettlements().catch(() => {});
     });
     return;
   }
@@ -524,45 +531,69 @@ chrome.runtime.onMessage.addListener((message: any, sender: any) => {
       return;
     }
 
-    const now = Date.now();
     const origin = senderOrigin(sender);
-    const originKey = requestOriginKey(origin);
-    const request: PendingConnectRequest = {
-      requestId,
-      tabId,
-      origin,
-      createdAt: now,
-    };
+    const now = Date.now();
 
-    queuePendingMutation(async () => {
-      let state = await sweepExpiredPendingRequests(now);
-      if (pendingRequestCount(state) >= MAX_TOTAL_PENDING_REQUESTS) {
-        sendConnectResult(tabId, requestId, { error: "Too many pending requests. Try again in a moment." });
-        return;
-      }
-      if (countOriginRequests(state, originKey) >= MAX_PENDING_PER_ORIGIN) {
-        sendConnectResult(tabId, requestId, { error: "Too many pending requests from this site. Wait for approval or timeout." });
-        return;
-      }
-      const wasIdle = pendingRequestCount(state) === 0;
-      state = enqueueConnectRequest(state, request);
-      await setPendingRequestState(state);
-      await updatePendingBadge(state);
-
-      // Only force-open popup when transitioning from no pending requests.
-      if (!wasIdle) return;
-
-      try {
-        await openExtensionPopup();
-      } catch {
-        const failed = resolveActiveConnectRequest(state, request.requestId);
-        if (!failed.resolved) return;
-        await setPendingRequestState(failed.state);
-        await updatePendingBadge(failed.state);
-        sendConnectResult(failed.resolved.tabId, failed.resolved.requestId, {
-          error: "Could not open Forge-OS popup. Click the extension icon in your toolbar.",
+    // B6: Fast-path — origin already approved, respond immediately without popup
+    getConnectedSites().then((sites) => {
+      const existing = origin ? sites[origin] : null;
+      if (existing) {
+        sendConnectResult(tabId, requestId, {
+          result: { address: existing.address, network: existing.network },
         });
+        return;
       }
+
+      // Not previously approved — enqueue for popup approval
+      const originKey = requestOriginKey(origin);
+      const request: PendingConnectRequest = { requestId, tabId, origin, createdAt: now };
+
+      queuePendingMutation(async () => {
+        let state = await sweepExpiredPendingRequests(now);
+        if (pendingRequestCount(state) >= MAX_TOTAL_PENDING_REQUESTS) {
+          sendConnectResult(tabId, requestId, { error: "Too many pending requests. Try again in a moment." });
+          return;
+        }
+        if (countOriginRequests(state, originKey) >= MAX_PENDING_PER_ORIGIN) {
+          sendConnectResult(tabId, requestId, { error: "Too many pending requests from this site. Wait for approval or timeout." });
+          return;
+        }
+        const wasIdle = pendingRequestCount(state) === 0;
+        state = enqueueConnectRequest(state, request);
+        await setPendingRequestState(state);
+        await updatePendingBadge(state);
+
+        // Only force-open popup when transitioning from no pending requests.
+        if (!wasIdle) return;
+
+        try {
+          await openExtensionPopup();
+        } catch {
+          const failed = resolveActiveConnectRequest(state, request.requestId);
+          if (!failed.resolved) return;
+          await setPendingRequestState(failed.state);
+          await updatePendingBadge(failed.state);
+          sendConnectResult(failed.resolved.tabId, failed.resolved.requestId, {
+            error: "Could not open Forge-OS popup. Click the extension icon in your toolbar.",
+          });
+        }
+      });
+    }).catch(() => {
+      // Storage read failed — fall through to normal approval queue
+      const request: PendingConnectRequest = { requestId, tabId, origin, createdAt: now };
+      queuePendingMutation(async () => {
+        let state = await sweepExpiredPendingRequests(now);
+        if (pendingRequestCount(state) >= MAX_TOTAL_PENDING_REQUESTS) {
+          sendConnectResult(tabId, requestId, { error: "Too many pending requests. Try again in a moment." });
+          return;
+        }
+        const wasIdle = pendingRequestCount(state) === 0;
+        state = enqueueConnectRequest(state, request);
+        await setPendingRequestState(state);
+        await updatePendingBadge(state);
+        if (!wasIdle) return;
+        await openExtensionPopup().catch(() => {});
+      });
     });
     return;
   }

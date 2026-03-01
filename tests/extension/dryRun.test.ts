@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PendingTx } from "../../extension/tx/types";
 
-const mockGetOrSyncUtxos = vi.fn();
+const mockSyncUtxos = vi.fn();
 const mockEstimateFee = vi.fn();
 
 vi.mock("../../extension/utxo/utxoSync", () => ({
-  getOrSyncUtxos: (...args: unknown[]) => mockGetOrSyncUtxos(...args),
+  syncUtxos: (...args: unknown[]) => mockSyncUtxos(...args),
 }));
 
 vi.mock("../../extension/network/kaspaClient", () => ({
@@ -41,10 +41,10 @@ function baseTx(overrides: Partial<PendingTx> = {}): PendingTx {
 }
 
 beforeEach(() => {
-  mockGetOrSyncUtxos.mockReset();
+  mockSyncUtxos.mockReset();
   mockEstimateFee.mockReset();
   mockEstimateFee.mockResolvedValue(1_000n);
-  mockGetOrSyncUtxos.mockResolvedValue({
+  mockSyncUtxos.mockResolvedValue({
     address: TEST_FROM,
     utxos: [{
       txId: "inputtx",

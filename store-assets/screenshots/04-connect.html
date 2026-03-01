@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Forge-OS Screenshot 4 — Connect to dApps</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1280px;height:800px;background:#05070A;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+  body::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 800px 500px at 640px 400px,rgba(57,221,182,0.06) 0%,transparent 70%);pointer-events:none}
+  body::after{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(57,221,182,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(57,221,182,0.03) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+
+  .scene{display:flex;align-items:center;gap:80px;z-index:1;position:relative}
+  .copy{width:380px}
+  .logo{display:flex;align-items:center;gap:12px;margin-bottom:36px}
+  .logo-mark{width:44px;height:44px;background:#39DDB6;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#05070A}
+  .logo-name{font-size:26px;font-weight:700;color:#fff;letter-spacing:0.5px}
+  .logo-name span{color:#39DDB6}
+  .tagline{font-size:38px;font-weight:700;color:#fff;line-height:1.15;margin-bottom:20px;letter-spacing:-0.5px}
+  .tagline em{color:#39DDB6;font-style:normal}
+  .sub{font-size:15px;color:rgba(255,255,255,0.5);line-height:1.6;margin-bottom:30px}
+  .steps{display:flex;flex-direction:column;gap:16px}
+  .step{display:flex;align-items:flex-start;gap:14px}
+  .step-num{width:28px;height:28px;border-radius:50%;background:rgba(57,221,182,0.15);border:1px solid rgba(57,221,182,0.3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#39DDB6;flex-shrink:0;margin-top:1px}
+  .step-text h4{font-size:13px;font-weight:600;color:#fff;margin-bottom:3px}
+  .step-text p{font-size:11px;color:rgba(255,255,255,0.4);line-height:1.4}
+
+  .popup-wrap{position:relative}
+  .popup-glow{position:absolute;inset:-30px;background:radial-gradient(ellipse at center,rgba(57,221,182,0.12),transparent 70%);border-radius:50%;pointer-events:none}
+  .popup{width:360px;height:560px;background:#0D1117;border:1px solid rgba(57,221,182,0.2);border-radius:18px;box-shadow:0 40px 120px rgba(0,0,0,0.8);overflow:hidden;display:flex;flex-direction:column}
+
+  .ph{background:#0D1117;padding:14px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .ph-brand{font-size:15px;font-weight:700;color:#fff}
+  .ph-brand span{color:#39DDB6}
+  .ph-badge{padding:3px 8px;background:rgba(57,221,182,0.12);border:1px solid rgba(57,221,182,0.3);border-radius:10px;font-size:10px;color:#39DDB6;font-weight:600}
+
+  .wb{flex:1;padding:20px 18px;display:flex;flex-direction:column;gap:16px;overflow:hidden}
+
+  .req-header{text-align:center;padding:8px 0}
+  .req-icon{width:60px;height:60px;background:rgba(57,221,182,0.08);border:2px solid rgba(57,221,182,0.2);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 12px}
+  .req-title{font-size:16px;font-weight:700;color:#fff;margin-bottom:6px}
+  .req-origin{font-size:11px;color:rgba(57,221,182,0.7);font-family:monospace}
+
+  .req-desc{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:12px 14px;font-size:11px;color:rgba(255,255,255,0.5);line-height:1.5}
+
+  .perms-label{font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.8px}
+  .perms{display:flex;flex-direction:column;gap:6px}
+  .perm{display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px}
+  .perm-dot{width:6px;height:6px;background:#39DDB6;border-radius:50%;flex-shrink:0}
+  .perm-text{font-size:11px;color:rgba(255,255,255,0.6)}
+
+  .addr-preview{background:rgba(57,221,182,0.06);border:1px solid rgba(57,221,182,0.2);border-radius:10px;padding:10px 12px;font-size:10px;color:#39DDB6;font-family:monospace;text-align:center}
+
+  .action-row{display:flex;gap:10px;margin-top:auto}
+  .btn-reject{flex:1;padding:13px;background:rgba(255,80,80,0.08);border:1px solid rgba(255,80,80,0.2);border-radius:11px;font-size:12px;font-weight:700;color:#FF5050;text-transform:uppercase;text-align:center;cursor:pointer}
+  .btn-approve{flex:2;padding:13px;background:#39DDB6;border:none;border-radius:11px;font-size:12px;font-weight:700;color:#05070A;text-transform:uppercase;text-align:center;cursor:pointer}
+
+  .pf{padding:10px 18px;border-top:1px solid rgba(255,255,255,0.05);display:flex;justify-content:space-between}
+  .pf-net{font-size:9px;color:rgba(57,221,182,0.5);font-family:monospace}
+  .pf-bps{font-size:9px;color:rgba(255,255,255,0.25)}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="copy">
+    <div class="logo">
+      <div class="logo-mark">F</div>
+      <div class="logo-name">Forge<span>.OS</span></div>
+    </div>
+    <div class="tagline">Connect to<br><em>Kaspa dApps</em></div>
+    <div class="sub">window.forgeos gives any Kaspa dApp a secure connection to your wallet — with explicit approval every time.</div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">
+          <h4>Site requests connection</h4>
+          <p>A Kaspa dApp calls <code style="color:#39DDB6;font-size:10px">window.forgeos.connect()</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">
+          <h4>Forge-OS popup opens</h4>
+          <p>The approval screen shows the origin, permissions requested, and your address.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">
+          <h4>You approve or reject</h4>
+          <p>Only your public address is shared. Private key never leaves the vault.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">
+          <h4>Signed in instantly</h4>
+          <p>Schnorr signature authenticates you on-site. No password typed into the page.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="popup-wrap">
+    <div class="popup-glow"></div>
+    <div class="popup">
+      <div class="ph">
+        <div class="ph-brand">Forge<span>.OS</span></div>
+        <div class="ph-badge">CONNECTION REQUEST</div>
+      </div>
+      <div class="wb">
+        <div class="req-header">
+          <div class="req-icon">🔗</div>
+          <div class="req-title">Connect Wallet</div>
+          <div class="req-origin">forgeos.xyz</div>
+        </div>
+        <div class="req-desc">
+          forgeos.xyz is requesting access to your Kaspa wallet address to sign you in. No funds will be moved.
+        </div>
+        <div class="perms-label">Permissions Requested</div>
+        <div class="perms">
+          <div class="perm"><div class="perm-dot"></div><div class="perm-text">View wallet address (public)</div></div>
+          <div class="perm"><div class="perm-dot"></div><div class="perm-text">Request message signatures</div></div>
+        </div>
+        <div class="addr-preview">kaspa:qpk2r9…vx9y · mainnet</div>
+        <div class="action-row">
+          <div class="btn-reject">Reject</div>
+          <div class="btn-approve">Connect</div>
+        </div>
+      </div>
+      <div class="pf">
+        <div class="pf-net">api.kaspa.org</div>
+        <div class="pf-bps">10 BPS · DAA 42.1M</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

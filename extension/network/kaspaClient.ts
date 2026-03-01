@@ -3,9 +3,15 @@
 // Does NOT use kaspa-wasm's WebSocket RPC — the extension uses REST only.
 import {
   getCustomKaspaRpc,
+  getKaspaRpcPoolOverride,
+  getLocalNodeEnabled,
+  getLocalNodeNetworkProfile,
   getKaspaRpcProviderPreset,
   type KaspaRpcProviderPreset,
+  type KaspaRpcPoolOverridePreset,
 } from "../shared/storage";
+import { getLocalNodeStatus } from "./localNodeClient";
+import { normalizeNetworkProfile, selectRpcBackend } from "./rpcBackendSelector";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -17,6 +23,23 @@ const DEFAULT_ENDPOINT_POOLS: Record<string, string[]> = {
   "testnet-11": ["https://api-tn11.kaspa.org"],
   // Keep TN12 isolated so operators can tune its endpoint pool independently.
   "testnet-12": ["https://api-tn12.kaspa.org"],
+};
+
+// Provider preset defaults:
+// Use known-working L1 Kaspa API roots by default so every preset is
+// immediately usable out of the box, while still allowing env overrides.
+const DEFAULT_IGRA_ENDPOINT_POOLS: Record<string, string[]> = {
+  mainnet: [...DEFAULT_ENDPOINT_POOLS.mainnet],
+  "testnet-10": [...DEFAULT_ENDPOINT_POOLS["testnet-10"]],
+  "testnet-11": [...DEFAULT_ENDPOINT_POOLS["testnet-11"]],
+  "testnet-12": [...DEFAULT_ENDPOINT_POOLS["testnet-12"]],
+};
+
+const DEFAULT_KASPLEX_ENDPOINT_POOLS: Record<string, string[]> = {
+  mainnet: [...DEFAULT_ENDPOINT_POOLS.mainnet],
+  "testnet-10": [...DEFAULT_ENDPOINT_POOLS["testnet-10"]],
+  "testnet-11": [...DEFAULT_ENDPOINT_POOLS["testnet-11"]],
+  "testnet-12": [...DEFAULT_ENDPOINT_POOLS["testnet-12"]],
 };
 
 function parseEndpointPoolEnv(envKey: string, fallback: string[]): string[] {
@@ -38,17 +61,17 @@ export const ENDPOINT_POOLS: Record<string, string[]> = {
 };
 
 const IGRA_ENDPOINT_POOLS: Record<string, string[]> = {
-  mainnet: parseEndpointPoolEnv("VITE_KASPA_IGRA_MAINNET_API_ENDPOINTS", []),
-  "testnet-10": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN10_API_ENDPOINTS", []),
-  "testnet-11": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN11_API_ENDPOINTS", []),
-  "testnet-12": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN12_API_ENDPOINTS", []),
+  mainnet: parseEndpointPoolEnv("VITE_KASPA_IGRA_MAINNET_API_ENDPOINTS", DEFAULT_IGRA_ENDPOINT_POOLS.mainnet),
+  "testnet-10": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN10_API_ENDPOINTS", DEFAULT_IGRA_ENDPOINT_POOLS["testnet-10"]),
+  "testnet-11": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN11_API_ENDPOINTS", DEFAULT_IGRA_ENDPOINT_POOLS["testnet-11"]),
+  "testnet-12": parseEndpointPoolEnv("VITE_KASPA_IGRA_TN12_API_ENDPOINTS", DEFAULT_IGRA_ENDPOINT_POOLS["testnet-12"]),
 };
 
 const KASPLEX_ENDPOINT_POOLS: Record<string, string[]> = {
-  mainnet: parseEndpointPoolEnv("VITE_KASPA_KASPLEX_MAINNET_API_ENDPOINTS", []),
-  "testnet-10": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN10_API_ENDPOINTS", []),
-  "testnet-11": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN11_API_ENDPOINTS", []),
-  "testnet-12": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN12_API_ENDPOINTS", []),
+  mainnet: parseEndpointPoolEnv("VITE_KASPA_KASPLEX_MAINNET_API_ENDPOINTS", DEFAULT_KASPLEX_ENDPOINT_POOLS.mainnet),
+  "testnet-10": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN10_API_ENDPOINTS", DEFAULT_KASPLEX_ENDPOINT_POOLS["testnet-10"]),
+  "testnet-11": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN11_API_ENDPOINTS", DEFAULT_KASPLEX_ENDPOINT_POOLS["testnet-11"]),
+  "testnet-12": parseEndpointPoolEnv("VITE_KASPA_KASPLEX_TN12_API_ENDPOINTS", DEFAULT_KASPLEX_ENDPOINT_POOLS["testnet-12"]),
 };
 
 export const ENDPOINTS: Record<string, string> = {
@@ -61,6 +84,10 @@ export const ENDPOINTS: Record<string, string> = {
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_BASE_MS = 600;
+const LOCAL_NODE_STATUS_CACHE_TTL_MS = 3_000;
+const REQUIRE_LOCAL_NODE_SYNC_FOR_SELECTION = String((import.meta as any)?.env?.VITE_LOCAL_NODE_REQUIRE_SYNC_FOR_SELECTION ?? "true")
+  .trim()
+  .toLowerCase() !== "false";
 
 function isRetryableHttpStatus(status: number): boolean {
   // Rate-limit and timeout responses can be transient and endpoint-specific.
@@ -85,6 +112,28 @@ type EndpointHealth = {
 };
 
 const _health: Record<string, EndpointHealth> = {};
+let _healthHydrated = false;
+let _localNodeStatusCache: { value: Awaited<ReturnType<typeof getLocalNodeStatus>>; expiresAt: number } | null = null;
+
+const RPC_HEALTH_SESSION_KEY = "forgeos.rpc.health.v1";
+
+async function hydrateHealthFromSession(): Promise<void> {
+  if (_healthHydrated) return;
+  _healthHydrated = true;
+  try {
+    const result = await chrome.storage.session.get(RPC_HEALTH_SESSION_KEY);
+    const saved = result?.[RPC_HEALTH_SESSION_KEY];
+    if (saved && typeof saved === "object") {
+      for (const [k, v] of Object.entries(saved as Record<string, EndpointHealth>)) {
+        if (typeof v === "object" && v !== null) _health[k] = v as EndpointHealth;
+      }
+    }
+  } catch { /* session storage unavailable (e.g. content script context) */ }
+}
+
+function persistHealthToSession(): void {
+  chrome.storage.session.set({ [RPC_HEALTH_SESSION_KEY]: _health }).catch(() => {});
+}
 
 function getEndpointHealth(base: string): EndpointHealth {
   if (!_health[base]) {
@@ -107,6 +156,7 @@ function markHealthSuccess(base: string, latencyMs: number, status = 200) {
   h.lastLatencyMs = latencyMs;
   h.lastStatus = status;
   h.lastError = "";
+  persistHealthToSession();
 }
 
 function markHealthFailure(base: string, error: string, status = 0) {
@@ -115,6 +165,7 @@ function markHealthFailure(base: string, error: string, status = 0) {
   h.consecutiveFails += 1;
   h.lastStatus = status;
   h.lastError = error;
+  persistHealthToSession();
 }
 
 function getCircuitBreaker(base: string) {
@@ -155,24 +206,29 @@ export interface KaspaEndpointHealthSnapshot {
   lastError: string;
 }
 
+export function getKaspaEndpointHealthForPool(poolInput: string[]): KaspaEndpointHealthSnapshot[] {
+  const pool = [...new Set((poolInput || []).filter(Boolean))];
+  return pool.map((base) => {
+    const cb = getCircuitBreaker(base);
+    const h = getEndpointHealth(base);
+    return {
+      base,
+      circuit: cb.state,
+      failures: cb.failures,
+      lastOkAt: h.lastOkAt,
+      lastFailAt: h.lastFailAt,
+      consecutiveFails: h.consecutiveFails,
+      lastLatencyMs: h.lastLatencyMs,
+      lastStatus: h.lastStatus,
+      lastError: h.lastError,
+    };
+  });
+}
+
 export function getKaspaEndpointHealth(network?: string): Record<string, KaspaEndpointHealthSnapshot[]> | KaspaEndpointHealthSnapshot[] {
   const mapNetwork = (net: string): KaspaEndpointHealthSnapshot[] => {
     const pool = ENDPOINT_POOLS[net] ?? ENDPOINT_POOLS.mainnet;
-    return pool.map((base) => {
-      const cb = getCircuitBreaker(base);
-      const h = getEndpointHealth(base);
-      return {
-        base,
-        circuit: cb.state,
-        failures: cb.failures,
-        lastOkAt: h.lastOkAt,
-        lastFailAt: h.lastFailAt,
-        consecutiveFails: h.consecutiveFails,
-        lastLatencyMs: h.lastLatencyMs,
-        lastStatus: h.lastStatus,
-        lastError: h.lastError,
-      };
-    });
+    return getKaspaEndpointHealthForPool(pool);
   };
 
   if (network) return mapNetwork(network);
@@ -200,24 +256,150 @@ function rankEndpointPool(poolInput: string[]): string[] {
   });
 }
 
-function resolveProviderPresetPool(network: string, preset: KaspaRpcProviderPreset): string[] {
+function networkEnvSuffix(network: string): "MAINNET" | "TN10" | "TN11" | "TN12" {
+  if (network === "testnet-10") return "TN10";
+  if (network === "testnet-11") return "TN11";
+  if (network === "testnet-12") return "TN12";
+  return "MAINNET";
+}
+
+function resolveProviderPresetPool(
+  network: string,
+  preset: KaspaRpcProviderPreset,
+): { pool: string[]; usedOfficialFallback: boolean } {
   const official = ENDPOINT_POOLS[network] ?? ENDPOINT_POOLS.mainnet;
+
+  if (preset === "local") {
+    return { pool: official, usedOfficialFallback: false };
+  }
 
   if (preset === "igra") {
     const pool = IGRA_ENDPOINT_POOLS[network] ?? [];
-    return pool.length ? pool : official;
+    return { pool: (pool.length ? pool : official), usedOfficialFallback: pool.length === 0 };
   }
 
   if (preset === "kasplex") {
     const pool = KASPLEX_ENDPOINT_POOLS[network] ?? [];
-    return pool.length ? pool : official;
+    return { pool: (pool.length ? pool : official), usedOfficialFallback: pool.length === 0 };
   }
 
   // "custom" still falls back to official pool when no custom endpoint is set.
-  return official;
+  return { pool: official, usedOfficialFallback: false };
+}
+
+export interface KaspaProviderPresetDescriptor {
+  network: string;
+  preset: KaspaRpcProviderPreset;
+  officialPool: string[];
+  providerPool: string[];
+  effectivePool: string[];
+  usesOfficialFallback: boolean;
+  requiredEnvKeys: string[];
+}
+
+export function describeKaspaProviderPreset(
+  network: string,
+  preset: KaspaRpcProviderPreset,
+  customEndpoint: string | null = null,
+  poolOverrides?: Partial<Record<KaspaRpcPoolOverridePreset, string[]>>,
+): KaspaProviderPresetDescriptor {
+  const normalizedNetwork = normalizeNetworkProfile(network) || "mainnet";
+  const officialPool = [...(
+    (poolOverrides?.official && poolOverrides.official.length > 0)
+      ? poolOverrides.official
+      : (ENDPOINT_POOLS[normalizedNetwork] ?? ENDPOINT_POOLS.mainnet)
+  )];
+  const providerResolution = resolveProviderPresetPool(normalizedNetwork, preset);
+  let providerPool = [...providerResolution.pool];
+  let usedOfficialFallback = providerResolution.usedOfficialFallback;
+  if (preset === "official" && poolOverrides?.official?.length) {
+    providerPool = [...poolOverrides.official];
+    usedOfficialFallback = false;
+  } else if (preset === "igra" && poolOverrides?.igra?.length) {
+    providerPool = [...poolOverrides.igra];
+    usedOfficialFallback = false;
+  } else if (preset === "kasplex" && poolOverrides?.kasplex?.length) {
+    providerPool = [...poolOverrides.kasplex];
+    usedOfficialFallback = false;
+  }
+  const trimmedCustom = String(customEndpoint || "").trim();
+  const envSuffix = networkEnvSuffix(normalizedNetwork);
+  let requiredEnvKeys: string[] = [];
+
+  if (preset === "igra") {
+    requiredEnvKeys = [`VITE_KASPA_IGRA_${envSuffix}_API_ENDPOINTS`];
+  } else if (preset === "kasplex") {
+    requiredEnvKeys = [`VITE_KASPA_KASPLEX_${envSuffix}_API_ENDPOINTS`];
+  } else if (preset === "local") {
+    requiredEnvKeys = ["VITE_LOCAL_NODE_CONTROL_URL"];
+  } else if (preset === "custom") {
+    requiredEnvKeys = ["(custom endpoint saved in extension storage)"];
+  }
+
+  let effectivePool = [...providerPool];
+  if (preset === "custom" && trimmedCustom) {
+    effectivePool = [trimmedCustom, ...officialPool.filter((entry) => entry !== trimmedCustom)];
+  }
+
+  const usesOfficialFallback = Boolean(
+    (preset === "igra" || preset === "kasplex") && usedOfficialFallback,
+  ) || Boolean(
+    preset === "custom" && !trimmedCustom,
+  );
+
+  return {
+    network: normalizedNetwork,
+    preset,
+    officialPool,
+    providerPool,
+    effectivePool,
+    usesOfficialFallback,
+    requiredEnvKeys,
+  };
+}
+
+export interface KaspaBackendSelectionSnapshot {
+  network: string;
+  source: "local" | "remote";
+  reason: string;
+  activeEndpoint: string | null;
+  pool: string[];
+}
+
+// Short-lived cache for the resolved endpoint pool.
+// Avoids redundant chrome.storage reads during burst API sequences
+// (e.g. buildTransaction → dryRunValidate → signTransaction each calling apiFetch).
+// TTL of 5 s means settings changes take effect on the next burst.
+const _poolCache = new Map<string, {
+  pool: string[];
+  source: "local" | "remote";
+  reason: string;
+  expiresAt: number;
+}>();
+const POOL_CACHE_TTL_MS = 5_000;
+
+export function invalidateEndpointPoolCache(network?: string): void {
+  if (network) {
+    _poolCache.delete(network);
+  } else {
+    _poolCache.clear();
+  }
+  _localNodeStatusCache = null;
+}
+
+async function getCachedLocalNodeStatus(): Promise<Awaited<ReturnType<typeof getLocalNodeStatus>>> {
+  const hit = _localNodeStatusCache;
+  if (hit && Date.now() < hit.expiresAt) return hit.value;
+  const value = await getLocalNodeStatus();
+  _localNodeStatusCache = { value, expiresAt: Date.now() + LOCAL_NODE_STATUS_CACHE_TTL_MS };
+  return value;
 }
 
 async function resolveRuntimeEndpointPool(network: string): Promise<string[]> {
+  await hydrateHealthFromSession();
+  const cached = _poolCache.get(network);
+  if (cached && Date.now() < cached.expiresAt) return cached.pool;
+
   let preset: KaspaRpcProviderPreset = "official";
   try {
     preset = await getKaspaRpcProviderPreset(network);
@@ -225,22 +407,95 @@ async function resolveRuntimeEndpointPool(network: string): Promise<string[]> {
     preset = "official";
   }
 
-  const fallbackPool = [...resolveProviderPresetPool(network, preset)];
-  if (preset !== "custom") return rankEndpointPool(fallbackPool);
+  const [officialOverride, igraOverride, kasplexOverride] = await Promise.all([
+    getKaspaRpcPoolOverride(network, "official").catch(() => [] as string[]),
+    getKaspaRpcPoolOverride(network, "igra").catch(() => [] as string[]),
+    getKaspaRpcPoolOverride(network, "kasplex").catch(() => [] as string[]),
+  ]);
+  const fallbackPool = (() => {
+    if (preset === "official" && officialOverride.length > 0) return [...officialOverride];
+    if (preset === "igra" && igraOverride.length > 0) return [...igraOverride];
+    if (preset === "kasplex" && kasplexOverride.length > 0) return [...kasplexOverride];
+    return [...resolveProviderPresetPool(network, preset).pool];
+  })();
+  let pool: string[];
 
-  let customEndpoint: string | null = null;
+  if (preset !== "custom") {
+    pool = rankEndpointPool(fallbackPool);
+  } else {
+    let customEndpoint: string | null = null;
+    try {
+      customEndpoint = await getCustomKaspaRpc(network);
+    } catch {
+      customEndpoint = null;
+    }
+    if (customEndpoint) {
+      const filtered = fallbackPool.filter((base) => base !== customEndpoint);
+      pool = rankEndpointPool([customEndpoint, ...filtered]);
+    } else {
+      pool = rankEndpointPool(fallbackPool);
+    }
+  }
+
+  // Local node mode (when enabled and healthy for the selected profile)
+  // is injected as primary RPC backend; remote pool remains fallback.
+  let localNodeEnabled = false;
+  let localNodeProfile = "mainnet";
   try {
-    customEndpoint = await getCustomKaspaRpc(network);
+    [localNodeEnabled, localNodeProfile] = await Promise.all([
+      getLocalNodeEnabled(),
+      getLocalNodeNetworkProfile(),
+    ]);
   } catch {
-    customEndpoint = null;
+    localNodeEnabled = false;
+  }
+  const localNodeStatus = await getCachedLocalNodeStatus();
+  const localHealthy = Boolean(
+    localNodeStatus?.ok
+    && localNodeStatus?.status?.running
+    && localNodeStatus?.status?.rpcHealthy
+    && localNodeStatus?.status?.rpcBaseUrl,
+  );
+  const localSynced = Boolean(localNodeStatus?.status?.sync?.synced);
+  const selection = selectRpcBackend({
+    targetNetwork: network,
+    remotePool: pool,
+    localNodeEnabled,
+    localNodeHealthy: localHealthy,
+    localNodeSynced: localSynced,
+    requireLocalSynced: REQUIRE_LOCAL_NODE_SYNC_FOR_SELECTION,
+    localNodeProfile,
+    localRpcEndpoint: localNodeStatus?.status?.rpcBaseUrl ?? null,
+  });
+  if (selection.source === "local" && selection.pool.length > 0) {
+    const [local, ...rest] = selection.pool;
+    pool = [local, ...rankEndpointPool(rest)];
+  } else {
+    pool = rankEndpointPool(selection.pool);
   }
 
-  if (customEndpoint) {
-    const filtered = fallbackPool.filter((base) => base !== customEndpoint);
-    return rankEndpointPool([customEndpoint, ...filtered]);
-  }
+  _poolCache.set(network, {
+    pool,
+    source: selection.source,
+    reason: selection.reason,
+    expiresAt: Date.now() + POOL_CACHE_TTL_MS,
+  });
+  return pool;
+}
 
-  return rankEndpointPool(fallbackPool);
+export async function getKaspaBackendSelection(
+  network = "mainnet",
+): Promise<KaspaBackendSelectionSnapshot> {
+  const normalizedNetwork = normalizeNetworkProfile(network) || "mainnet";
+  const pool = await resolveRuntimeEndpointPool(normalizedNetwork);
+  const cached = _poolCache.get(normalizedNetwork);
+  return {
+    network: normalizedNetwork,
+    source: cached?.source ?? "remote",
+    reason: cached?.reason ?? "unknown",
+    activeEndpoint: pool[0] ?? null,
+    pool: [...pool],
+  };
 }
 
 // ── Core fetch ────────────────────────────────────────────────────────────────
@@ -507,5 +762,5 @@ export async function probeKaspaEndpointPool(
     }
   }));
 
-  return getKaspaEndpointHealth(network) as KaspaEndpointHealthSnapshot[];
+  return getKaspaEndpointHealthForPool(pool);
 }

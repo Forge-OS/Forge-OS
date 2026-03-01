@@ -27,6 +27,8 @@ import {
 } from "../../constants";
 import { fmtT, shortAddr, uid } from "../../helpers";
 import { runQuantEngineClient, getQuantEngineClientMode } from "../../quant/runQuantEngineClient";
+import { deriveAdaptiveAutoApproveThreshold } from "../../quant/autoThreshold";
+import { computeDagSignals, formatDagSignalsLog } from "../../kaspa/dagSignals";
 import { LOG_COL, seedLog } from "../../log/seedLog";
 import { C, mono } from "../../tokens";
 import { consumeUsageCycle, getUsageState } from "../../runtime/usageQuota";
@@ -37,6 +39,7 @@ import { WalletAdapter } from "../../wallet/WalletAdapter";
 import { getAgentDepositAddress } from "../../runtime/agentDeposit";
 import { useAgentLifecycle } from "./hooks/useAgentLifecycle";
 import { useAutoCycleLoop } from "./hooks/useAutoCycleLoop";
+import { usePriceTrigger } from "./hooks/usePriceTrigger";
 import { useAlerts } from "./hooks/useAlerts";
 import { useDashboardRuntimePersistence } from "./hooks/useDashboardRuntimePersistence";
 import { useDashboardUiSummary } from "./hooks/useDashboardUiSummary";
@@ -85,6 +88,7 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
   const runtimeScope = `${DEFAULT_NETWORK}:${String(wallet?.address || "unknown").toLowerCase()}:${String(agent?.agentId || agent?.name || "default").toLowerCase()}`;
   const cycleLockRef = useRef(false);
   const lastRegimeRef = useRef("");
+  const lastAdaptiveThresholdReasonRef = useRef("");
   const [runtimeHydrated, setRuntimeHydrated] = useState(false);
   const [tab, setTab] = useState("overview");
   // Helper to read persisted state from localStorage
@@ -114,7 +118,7 @@ export function Dashboard({agent, wallet, agents = [], activeAgentId, onSelectAg
     ? persistedState.execMode
     : (agent.execMode || "manual");
   const [execMode, setExecMode] = useState(initialExecMode);
-  const [autoThresh] = useState(parseFloat(agent.autoApproveThreshold) || 50);
+  const baseAutoThresh = useMemo(() => parseFloat(agent.autoApproveThreshold) || 50, [agent.autoApproveThreshold]);
   const [usage, setUsage] = useState(() => getUsageState(FREE_CYCLES_PER_DAY, usageScope));
   // Get persisted liveExecutionArmed value if available
   const initialLiveExecutionArmed = persistedState?.liveExecutionArmed !== undefined 
@@ -133,7 +137,7 @@ const [viewportWidth, setViewportWidth] = useState(
     kpiTarget: agent.kpiTarget || "12",
     capitalLimit: agent.capitalLimit || "5000",
     horizon: agent.horizon || 30,
-    autoApproveThreshold: agent.autoApproveThreshold || "50",
+    autoApproveThreshold: agent.autoApproveThreshold || "100",
     execMode: agent.execMode || "manual",
   });
   
@@ -173,6 +177,8 @@ const [viewportWidth, setViewportWidth] = useState(
     liveConnected,
     streamConnected,
     streamRetryCount,
+    streamPulse,
+    lastStreamEvent,
     refreshKasData,
   } = useKaspaFeed({
     walletAddress: wallet?.address,
@@ -298,6 +304,25 @@ const [viewportWidth, setViewportWidth] = useState(
     pnlAttribution: pnlAttributionBase,
     receiptConsistencyMetrics,
   });
+  const adaptiveAutoThreshold = useMemo(
+    () =>
+      deriveAdaptiveAutoApproveThreshold({
+        baseThresholdKas: baseAutoThresh,
+        decisions,
+        marketHistory,
+        calibrationHealth: executionGuardrails?.calibration?.health,
+        truthDegraded: executionGuardrails?.truth?.degraded,
+        minimumSamples: 10,
+        maxSamples: 48,
+      }),
+    [
+      baseAutoThresh,
+      decisions,
+      executionGuardrails?.calibration?.health,
+      executionGuardrails?.truth?.degraded,
+      marketHistory,
+    ]
+  );
   const pnlAttribution = useMemo(() => {
     const truth = executionGuardrails.truth;
     const base = pnlAttributionBase as any;
@@ -364,6 +389,23 @@ const [viewportWidth, setViewportWidth] = useState(
     activeAttributionSummary: pnlAttribution,
   });
 
+  // Price-reactive early cycle: fire immediately when KAS/USD moves ≥ 1%
+  // instead of waiting for the next blind heartbeat interval.
+  // Declared before runCycle so resetPriceTrigger is in scope for the finally block.
+  const priceTriggerResetRef = useRef<() => void>(() => {});
+  const { resetPriceTrigger } = usePriceTrigger({
+    priceUsd: kasData?.priceUsd,
+    enabled: status === "RUNNING" && liveExecutionArmed && liveConnected && runtimeHydrated,
+    triggerThresholdPct: 1.0,
+    onTrigger: (reason: string) => {
+      addLog({ type: "DATA", msg: `Price trigger fired (${reason}) — accelerating next cycle.`, fee: null });
+      setNextAutoCycleAt(Date.now() - 1);
+    },
+  });
+  // Keep a stable ref so runCycle's finally block can call it without adding
+  // resetPriceTrigger to the dep array (which would recreate runCycle on every tick).
+  useEffect(() => { priceTriggerResetRef.current = resetPriceTrigger; }, [resetPriceTrigger]);
+
   const runCycle = useCallback(async()=>{
     if (cycleLockRef.current || status!=="RUNNING" || !runtimeHydrated) return;
     cycleLockRef.current = true;
@@ -374,11 +416,13 @@ const [viewportWidth, setViewportWidth] = useState(
         return;
       }
 
-      setNextAutoCycleAt(Date.now() + cycleIntervalMs);
+      const dagSignals = computeDagSignals(marketHistory, DEFAULT_NETWORK);
+      setNextAutoCycleAt(Date.now() + Math.round(cycleIntervalMs * dagSignals.cycleMultiplier));
       addLog({type:"DATA", msg:`Kaspa DAG snapshot: DAA ${kasData?.dag?.daaScore||"—"} · Wallet ${kasData?.walletKas||"—"} KAS`, fee:null});
+      addLog({type:"DATA", msg:formatDagSignalsLog(dagSignals), fee:null});
       setUsage(consumeUsageCycle(FREE_CYCLES_PER_DAY, usageScope));
 
-      const dec = await runQuantEngineClient(agent, kasData||{}, { history: marketHistory });
+      const dec = await runQuantEngineClient(agent, kasData||{}, { history: marketHistory, dagSignals });
       const decSource = String(dec?.decision_source || "ai");
       const quantRegime = String(dec?.quant_metrics?.regime || "NA");
       if (ACCUMULATE_ONLY && !["ACCUMULATE", "HOLD"].includes(dec.action)) {
@@ -542,10 +586,32 @@ const [viewportWidth, setViewportWidth] = useState(
               fee:null,
             });
           }
+          // All decision sources (ai, hybrid-ai, quant-core, fallback) are eligible for
+          // auto-approve — the calibration guardrail, risk gate, and confidence gate are
+          // the real safety net. Blocking on source alone was over-conservative.
+          // During a DAG activity surge the effective threshold is lifted 1.5× so the bot
+          // can execute larger accumulation tranches when on-chain demand is elevated.
+          const surgeBoost = dagSignals.activitySurge && dec.action === "ACCUMULATE" ? 1.5 : 1.0;
+          const effectiveAutoThresh = adaptiveAutoThreshold.thresholdKas * surgeBoost;
+          if (adaptiveAutoThreshold.samplesSufficient && Math.abs(adaptiveAutoThreshold.multiplier - 1) >= 0.08) {
+            const adaptiveReasonKey =
+              `${adaptiveAutoThreshold.tier}|${adaptiveAutoThreshold.reason}|${adaptiveAutoThreshold.thresholdKas.toFixed(4)}`;
+            if (lastAdaptiveThresholdReasonRef.current !== adaptiveReasonKey) {
+              addLog({
+                type: "SYSTEM",
+                msg:
+                  `Adaptive auto-threshold ${adaptiveAutoThreshold.tier.toUpperCase()} ` +
+                  `(${adaptiveAutoThreshold.rolling.wins}/${adaptiveAutoThreshold.rolling.samples} wins) ` +
+                  `→ ${adaptiveAutoThreshold.thresholdKas.toFixed(4)} KAS base ` +
+                  `(${adaptiveAutoThreshold.reason}).`,
+                fee: null,
+              });
+              lastAdaptiveThresholdReasonRef.current = adaptiveReasonKey;
+            }
+          }
           const autoApproveCandidate =
-            execMode==="autonomous" &&
-            txItem.amount_kas <= autoThresh &&
-            (decSource === "ai" || decSource === "hybrid-ai");
+            execMode === "autonomous" &&
+            txItem.amount_kas <= effectiveAutoThresh;
           const isAutoApprove = autoApproveCandidate && !autoApproveGuardrailDisabled;
           if (autoApproveCandidate && !isAutoApprove) {
             addLog({
@@ -590,6 +656,7 @@ const [viewportWidth, setViewportWidth] = useState(
     finally {
       setLoading(false);
       cycleLockRef.current = false;
+      priceTriggerResetRef.current();   // re-anchor price baseline after each cycle
     }
   }, [
     ACCUMULATE_ONLY,
@@ -597,7 +664,7 @@ const [viewportWidth, setViewportWidth] = useState(
     activePortfolioRow,
     addLog,
     agent,
-    autoThresh,
+    adaptiveAutoThreshold,
     cycleIntervalMs,
     execMode,
     kasData,
@@ -631,6 +698,33 @@ const [viewportWidth, setViewportWidth] = useState(
     runCycle,
   });
 
+  const lastStreamKickRef = useRef(0);
+  const lastStreamKickLogRef = useRef(0);
+  useEffect(() => {
+    if (!streamPulse || status !== "RUNNING" || !runtimeHydrated || !liveExecutionArmed) return;
+    const event = lastStreamEvent;
+    if (!event || event.kind === "unknown") return;
+    const now = Date.now();
+    const minKickIntervalMs = event.kind === "utxo" ? 1_500 : 2_500;
+    if (now - lastStreamKickRef.current < minKickIntervalMs) return;
+    lastStreamKickRef.current = now;
+    setNextAutoCycleAt((prev: any) => Math.min(Number(prev || now), now - 1));
+    if (now - lastStreamKickLogRef.current >= 15_000) {
+      const msg = event.kind === "daa"
+        ? `DAA push detected (${event.daaScore || "n/a"}) — accelerating quant cycle.`
+        : `UTXO push detected${event.affectsWallet ? " for active wallet" : ""} — accelerating quant cycle.`;
+      addLog({ type: "DATA", msg, fee: null });
+      lastStreamKickLogRef.current = now;
+    }
+  }, [
+    addLog,
+    lastStreamEvent,
+    liveExecutionArmed,
+    runtimeHydrated,
+    status,
+    streamPulse,
+  ]);
+
   useEffect(() => {
     const latestRegime = String(decisions[0]?.dec?.quant_metrics?.regime || "");
     if (!latestRegime) return;
@@ -658,6 +752,36 @@ const [viewportWidth, setViewportWidth] = useState(
     const signedQueueItem = { ...currentSigningItem, status: "signed", txid: tx?.txid };
     await settleTreasuryFeePayout(signedQueueItem, "post-sign");
   }, [handleSignedBase, settleTreasuryFeePayout, signingItem]);
+
+  /** Download the full agent config as a JSON backup file. */
+  const exportAgentConfig = () => {
+    try {
+      const exportPayload = {
+        exportedAt: new Date().toISOString(),
+        forgeosVersion: "1",
+        agent: {
+          ...agent,
+          _runtimeSnapshot: {
+            execMode,
+            liveExecutionArmed,
+            status,
+            totalDecisions: decisions.length,
+            totalQueueEntries: queue.length,
+          },
+        },
+      };
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `forgeos-agent-${String(agent?.name || "config").replace(/\s+/g, "-").toLowerCase()}-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addLog({ type: "SYSTEM", msg: `Agent config exported to JSON backup.`, fee: null });
+    } catch {
+      addLog({ type: "ERROR", msg: "Export failed — could not create download.", fee: null });
+    }
+  };
 
   const killSwitch = () => {
     transitionAgentStatus({ type: "KILL" });
@@ -716,6 +840,7 @@ const [viewportWidth, setViewportWidth] = useState(
     streamBadgeText,
     streamBadgeColor,
   } = uiSummary;
+  const isNarrowPhone = isMobile && viewportWidth < 430;
   const TABS = [
     {k:"overview",l:"OVERVIEW"},
     {k:"portfolio",l:"PORTFOLIO"},
@@ -919,11 +1044,27 @@ const [viewportWidth, setViewportWidth] = useState(
           {wallet?.provider && <Badge text={wallet?.provider?.toUpperCase()} color={C.purple} dot/>}
           {/* ENGINE WORKER — only when quant engine is in worker mode */}
           {quantClientMode === "worker" && <Badge text="ENGINE WORKER" color={C.ok}/>}
+          {adaptiveAutoThreshold.samplesSufficient && (
+            <Badge
+              text={`AUTO THR ${adaptiveAutoThreshold.thresholdKas.toFixed(2)}K`}
+              color={
+                adaptiveAutoThreshold.tier === "boosted"
+                  ? C.ok
+                  : adaptiveAutoThreshold.tier === "restricted"
+                    ? C.danger
+                    : adaptiveAutoThreshold.tier === "tightened"
+                      ? C.warn
+                      : C.dim
+              }
+            />
+          )}
           {/* Auto cycle countdown */}
           {autoCycleCountdownLabel && <Badge text={`AUTO ${autoCycleCountdownLabel}`} color={status==="RUNNING"?C.text:C.dim}/>}
           {/* Live feed badges */}
           {liveConnected && <Badge text="DAG LIVE" color={C.ok} dot/>}
           {streamConnected && streamBadgeText && <Badge text={streamBadgeText} color={streamBadgeColor} dot/>}
+          {lastStreamEvent?.kind === "daa" && <Badge text="WS DAA PUSH" color={C.ok} dot/>}
+          {lastStreamEvent?.kind === "utxo" && lastStreamEvent?.affectsWallet && <Badge text="WS UTXO PUSH" color={C.warn} dot/>}
         </div>
       </div>
 
@@ -947,69 +1088,69 @@ const [viewportWidth, setViewportWidth] = useState(
       {tab==="overview" && (
         <div>
           {/* DeFi Header - Wallet Balance & Key Metrics */}
-          <Card p={0} style={{marginBottom:12, background: `linear-gradient(135deg, rgba(16,25,35,0.48) 0%, rgba(11,17,24,0.32) 100%)`, border: `1px solid ${C.accent}40`, boxShadow: `0 4px 24px ${C.accent}15`}}>
-            <div style={{padding: "18px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom: `1px solid ${C.border}`, background: `linear-gradient(90deg, ${C.accent}15 0%, transparent 100%)`}}>
-              <div style={{display:"flex", alignItems:"center", gap:14}}>
-                <div style={{width:52, height:52, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden"}}>
-                  <img src="/kaspa-logo.png" alt="KAS" width={56} height={56} style={{objectFit:"cover", marginTop:1}} />
+          <Card data-testid="overview-portfolio-header" p={0} style={{marginBottom:12, background: `linear-gradient(135deg, rgba(16,25,35,0.48) 0%, rgba(11,17,24,0.32) 100%)`, border: `1px solid ${C.accent}40`, boxShadow: `0 4px 24px ${C.accent}15`}}>
+            <div style={{padding: isNarrowPhone ? "12px 10px 10px" : isMobile ? "14px 14px 12px" : "18px 24px", display:"flex", flexDirection:isMobile ? "column" : "row", justifyContent:"space-between", alignItems:isMobile ? "stretch" : "center", gap:isMobile ? 12 : 0, borderBottom: `1px solid ${C.border}`, background: `linear-gradient(90deg, ${C.accent}15 0%, transparent 100%)`}}>
+              <div style={{display:"flex", alignItems:"center", gap:isNarrowPhone ? 8 : isMobile ? 10 : 14, minWidth:0}}>
+                <div style={{width:isNarrowPhone ? 40 : isMobile ? 44 : 52, height:isNarrowPhone ? 40 : isMobile ? 44 : 52, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", flexShrink:0}}>
+                  <img src="/kaspa-logo.png" alt="KAS" width={isNarrowPhone ? 42 : isMobile ? 48 : 56} height={isNarrowPhone ? 42 : isMobile ? 48 : 56} style={{objectFit:"cover", marginTop:1}} />
                 </div>
-                <div style={{display:"flex", flexDirection:"column", justifyContent:"center"}}>
+                <div style={{display:"flex", flexDirection:"column", justifyContent:"center", minWidth:0}}>
                   <div style={{fontSize:10, color:C.accent, ...mono, marginBottom:1, letterSpacing:"0.15em", fontWeight:700}}>◆ TOTAL PORTFOLIO VALUE</div>
-                  <div style={{fontSize:36, color:C.accent, fontWeight:700, ...mono, textShadow: `0 0 30px ${C.accent}60`, lineHeight:1}}>
-                    {kasData?.walletKas || agent.capitalLimit} <span style={{fontSize:18, color:C.dim}}>KAS</span>
+                  <div style={{fontSize:isNarrowPhone ? 24 : isMobile ? 28 : 36, color:C.accent, fontWeight:700, ...mono, textShadow: `0 0 30px ${C.accent}60`, lineHeight:1, wordBreak:"break-word"}}>
+                    {kasData?.walletKas || agent.capitalLimit} <span style={{fontSize:isNarrowPhone ? 12 : isMobile ? 14 : 18, color:C.dim}}>KAS</span>
                   </div>
                   {Number(kasData?.priceUsd || 0) > 0 && (
-                    <div style={{fontSize:18, color:C.text, ...mono, display:"flex", alignItems:"center", gap:8}}>
+                    <div style={{fontSize:isNarrowPhone ? 13 : isMobile ? 14 : 18, color:C.text, ...mono, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap"}}>
                       ${(Number(kasData?.walletKas || 0) * Number(kasData?.priceUsd)).toFixed(2)} 
-                      <span style={{color:C.ok, fontSize:12, background:C.ok + "20", padding:"2px 8px", borderRadius:4}}>USD</span>
+                      <span style={{color:C.ok, fontSize:isNarrowPhone ? 9 : isMobile ? 10 : 12, background:C.ok + "20", padding:"2px 8px", borderRadius:4}}>USD</span>
                     </div>
                   )}
                 </div>
               </div>
-              <div style={{display:"flex", flexDirection:"column", gap:10, alignItems:"flex-end"}}>
-                <div style={{display:"flex", gap:10, alignItems:"center", background:`${C.s2}90`, padding:"10px 16px", borderRadius:10, border:`1px solid ${C.border}`}}>
+              <div style={{display:"flex", flexDirection:isMobile ? "row" : "column", gap:10, alignItems:isMobile ? "stretch" : "flex-end", width:isMobile ? "100%" : "auto"}}>
+                <div style={{display:"flex", gap:10, alignItems:"center", justifyContent:isMobile ? "space-between" : "flex-start", background:`${C.s2}90`, padding:isNarrowPhone ? "7px 8px" : isMobile ? "8px 10px" : "10px 16px", borderRadius:10, border:`1px solid ${C.border}`, width:isMobile ? "100%" : "auto"}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>
-                    <span style={{fontSize:11, color:C.dim, ...mono}}>KAS/USD</span>
-                    <span style={{fontSize:18, color:C.text, fontWeight:700, ...mono}}>${Number(kasData?.priceUsd || 0).toFixed(4)}</span>
+                    <span style={{fontSize:isNarrowPhone ? 9 : isMobile ? 10 : 11, color:C.dim, ...mono}}>KAS/USD</span>
+                    <span style={{fontSize:isNarrowPhone ? 14 : isMobile ? 16 : 18, color:C.text, fontWeight:700, ...mono}}>${Number(kasData?.priceUsd || 0).toFixed(4)}</span>
                   </div>
                 </div>
               </div>
             </div>
             {/* Quick Stats Row - DeFi Style */}
-            <div style={{padding: "16px 24px", display:"grid", gridTemplateColumns:"repeat(6, 1fr)", gap:16, background:`${C.border}15`}}>
+            <div data-testid="overview-quick-stats" style={{padding: isNarrowPhone ? "10px" : isMobile ? "12px 14px" : "16px 24px", display:"grid", gridTemplateColumns:isNarrowPhone ? "1fr" : isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(6, 1fr)", gap:isMobile ? 10 : 16, background:`${C.border}15`}}>
               <div style={{textAlign:"center", background:C.s2 + "60", padding:"12px 8px", borderRadius:8, border:`1px solid ${C.ok}30`}}>
-                <div style={{fontSize:9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>SPENDABLE</div>
-                <div style={{fontSize:18, color:C.ok, fontWeight:700, ...mono}}>{spendableKas.toFixed(2)}</div>
-                <div style={{fontSize:9, color:C.dim, ...mono}}>KAS</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>SPENDABLE</div>
+                <div style={{fontSize:isMobile ? 16 : 18, color:C.ok, fontWeight:700, ...mono}}>{spendableKas.toFixed(2)}</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono}}>KAS</div>
               </div>
               <div style={{textAlign:"center", background:C.s2 + "60", padding:"12px 8px", borderRadius:8, border:`1px solid ${C.warn}30`}}>
-                <div style={{fontSize:9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>RESERVE</div>
-                <div style={{fontSize:18, color:C.warn, fontWeight:700, ...mono}}>{RESERVE}</div>
-                <div style={{fontSize:9, color:C.dim, ...mono}}>KAS</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>RESERVE</div>
+                <div style={{fontSize:isMobile ? 16 : 18, color:C.warn, fontWeight:700, ...mono}}>{RESERVE}</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono}}>KAS</div>
               </div>
               <div style={{textAlign:"center", background:C.s2 + "60", padding:"12px 8px", borderRadius:8, border:`1px solid ${C.border}`}}>
-                <div style={{fontSize:9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>DAA HEIGHT</div>
-                <div style={{fontSize:18, color:C.text, fontWeight:700, ...mono}}>{kasData?.dag?.daaScore?.toLocaleString()?.slice(-6) || "—"}</div>
-                <div style={{fontSize:9, color:C.dim, ...mono}}>BLOCK</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>DAA HEIGHT</div>
+                <div style={{fontSize:isMobile ? 16 : 18, color:C.text, fontWeight:700, ...mono}}>{kasData?.dag?.daaScore?.toLocaleString()?.slice(-6) || "—"}</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono}}>BLOCK</div>
               </div>
               <div style={{textAlign:"center", background:C.s2 + "60", padding:"12px 8px", borderRadius:8, border:`1px solid ${pendingCount > 0 ? C.warn : C.border}`}}>
-                <div style={{fontSize:9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>PENDING</div>
-                <div style={{fontSize:18, color:pendingCount > 0 ? C.warn : C.dim, fontWeight:700, ...mono}}>{pendingCount}</div>
-                <div style={{fontSize:9, color:C.dim, ...mono}}>TXS</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>PENDING</div>
+                <div style={{fontSize:isMobile ? 16 : 18, color:pendingCount > 0 ? C.warn : C.dim, fontWeight:700, ...mono}}>{pendingCount}</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono}}>TXS</div>
               </div>
               <div style={{textAlign:"center", background:C.s2 + "60", padding:"12px 8px", borderRadius:8, border:`1px solid ${C.border}`}}>
-                <div style={{fontSize:9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>FEES PAID</div>
-                <div style={{fontSize:18, color:C.text, fontWeight:700, ...mono}}>{totalFees.toFixed(3)}</div>
-                <div style={{fontSize:9, color:C.dim, ...mono}}>KAS</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>FEES PAID</div>
+                <div style={{fontSize:isMobile ? 16 : 18, color:C.text, fontWeight:700, ...mono}}>{totalFees.toFixed(3)}</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono}}>KAS</div>
               </div>
               <div style={{textAlign:"center", background:C.s2 + "60", padding:"12px 8px", borderRadius:8, border:`1px solid ${C.accent}30`}}>
-                <div style={{fontSize:9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>CYCLE SIZE</div>
-                <div style={{fontSize:18, color:C.accent, fontWeight:700, ...mono}}>{agent.capitalLimit}</div>
-                <div style={{fontSize:9, color:C.dim, ...mono}}>KAS</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono, marginBottom:6, letterSpacing:"0.1em"}}>CYCLE SIZE</div>
+                <div style={{fontSize:isMobile ? 16 : 18, color:C.accent, fontWeight:700, ...mono}}>{agent.capitalLimit}</div>
+                <div style={{fontSize:isMobile ? 8 : 9, color:C.dim, ...mono}}>KAS</div>
               </div>
             </div>
 {/* Quick Actions Section */}
-            <div style={{padding: "14px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", borderTop:`1px solid ${C.border}`}}>
+            <div style={{padding: isNarrowPhone ? "12px 10px" : isMobile ? "12px 14px" : "14px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", borderTop:`1px solid ${C.border}`}}>
               <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
                 <Btn onClick={runCycle} disabled={loading||status!=="RUNNING"} size="sm">
                   {loading ? "⏳" : "🚀"} {loading ? "RUNNING" : "RUN CYCLE"}
@@ -1023,6 +1164,9 @@ const [viewportWidth, setViewportWidth] = useState(
                 </Btn>
                 <Btn onClick={()=>transitionAgentStatus({ type: status==="RUNNING" ? "PAUSE" : "RESUME" })} variant="ghost" size="sm">
                   {status==="RUNNING" ? "⏸ PAUSE AGENT" : "▶️ RESUME AGENT"}
+                </Btn>
+                <Btn onClick={exportAgentConfig} variant="ghost" size="sm" title="Download agent config as JSON backup">
+                  EXPORT
                 </Btn>
                 <Btn onClick={killSwitch} variant="danger" size="sm">
                   🛑 KILL-SWITCH
@@ -1494,7 +1638,7 @@ const [viewportWidth, setViewportWidth] = useState(
           <div style={{display:"grid", gridTemplateColumns:splitGridCols, gap:12}}>
             <Card p={18}>
               <Label>Agent Configuration</Label>
-              {[["Strategy",activeStrategyLabel],["Strategy Class",String(agent?.strategyClass || "custom").toUpperCase()],["Risk",agent.risk.toUpperCase()],["Capital / Cycle",`${agent.capitalLimit} KAS`],["Portfolio Allocator","AUTO"],["Exec Mode",execMode.toUpperCase()],["Auto-Approve ≤",`${autoThresh} KAS`],["Horizon",`${agent.horizon} days`],["KPI Target",`${agent.kpiTarget}% ROI`]].map(([k,v])=> (
+              {[["Strategy",activeStrategyLabel],["Strategy Class",String(agent?.strategyClass || "custom").toUpperCase()],["Risk",agent.risk.toUpperCase()],["Capital / Cycle",`${agent.capitalLimit} KAS`],["Portfolio Allocator","AUTO"],["Exec Mode",execMode.toUpperCase()],["Auto-Approve ≤",`${adaptiveAutoThreshold.thresholdKas.toFixed(2)} KAS`],["Horizon",`${agent.horizon} days`],["KPI Target",`${agent.kpiTarget}% ROI`]].map(([k,v])=> (
                 <div key={k as any} style={{display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.border}`}}>
                   <span style={{fontSize:12, color:C.dim, ...mono}}>{k}</span>
                   <span style={{fontSize:12, color:C.text, ...mono}}>{v}</span>
@@ -1637,19 +1781,15 @@ const [viewportWidth, setViewportWidth] = useState(
             <div style={{display:"grid", gridTemplateColumns:isTablet ? "1fr" : "1fr 1fr", gap:12}}>
               <div style={{background:C.s2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px"}}>
                 <div style={{fontSize:10, color:C.dim, marginBottom:4, ...mono}}>PRIMARY RPC</div>
-                <div style={{fontSize:12, color:C.text, lineHeight:1.5, wordBreak:"break-all", ...mono}}>
-                  {KAS_API || "UNSET"}
+                <div style={{fontSize:12, color:C.text, lineHeight:1.5, ...mono}}>
+                  {KAS_API ? "Configured (hidden)" : "UNSET"}
                 </div>
               </div>
               <div style={{background:C.s2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px"}}>
                 <div style={{fontSize:10, color:C.dim, marginBottom:4, ...mono}}>FALLBACK RPCS</div>
                 {KAS_API_FALLBACKS.length > 0 ? (
-                  <div style={{display:"flex", flexDirection:"column", gap:4}}>
-                    {KAS_API_FALLBACKS.map((endpoint) => (
-                      <div key={endpoint} style={{fontSize:11, color:C.text, lineHeight:1.4, wordBreak:"break-all", ...mono}}>
-                        {endpoint}
-                      </div>
-                    ))}
+                  <div style={{fontSize:11, color:C.text, lineHeight:1.4, ...mono}}>
+                    {KAS_API_FALLBACKS.length} configured (hidden)
                   </div>
                 ) : (
                   <div style={{fontSize:11, color:C.dim, ...mono}}>None configured</div>
@@ -1908,6 +2048,9 @@ const [viewportWidth, setViewportWidth] = useState(
                 <Btn onClick={()=>transitionAgentStatus({ type: status==="RUNNING" ? "PAUSE" : "RESUME" })} variant="ghost" size="sm">
                   {status==="RUNNING" ? "⏸ PAUSE AGENT" : "▶️ RESUME AGENT"}
                 </Btn>
+                <Btn onClick={exportAgentConfig} variant="ghost" size="sm" title="Download agent config as JSON backup">
+                  EXPORT
+                </Btn>
                 <Btn onClick={killSwitch} variant="danger" size="sm">
                   🛑 KILL-SWITCH
                 </Btn>
@@ -1915,7 +2058,7 @@ const [viewportWidth, setViewportWidth] = useState(
             </Card>
             <Card p={18}>
               <Label>Active Risk Limits — {agent?.risk?.toUpperCase() || "MEDIUM"}</Label>
-              {[["Max Single Exposure",agent?.risk==="low"?"5%":agent?.risk==="medium"?"10%":"20%",C.warn],["Drawdown Halt",agent?.risk==="low"?"-8%":agent?.risk==="medium"?"-15%":"-25%",C.danger],["Confidence Floor","0.75",C.dim],["Kelly Cap",agent?.risk==="low"?"10%":agent?.risk==="medium"?"20%":"40%",C.warn],["Auto-Approve ≤",`${autoThresh} KAS`,C.accent]].map(([k,v,c])=> (
+              {[["Max Single Exposure",agent?.risk==="low"?"5%":agent?.risk==="medium"?"10%":"20%",C.warn],["Drawdown Halt",agent?.risk==="low"?"-8%":agent?.risk==="medium"?"-15%":"-25%",C.danger],["Confidence Floor","0.75",C.dim],["Kelly Cap",agent?.risk==="low"?"10%":agent?.risk==="medium"?"20%":"40%",C.warn],["Auto-Approve ≤",`${adaptiveAutoThreshold.thresholdKas.toFixed(2)} KAS`,C.accent]].map(([k,v,c])=> (
                 <div key={k as any} style={{display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.border}`}}>
                   <span style={{fontSize:12, color:C.dim, ...mono}}>{k}</span>
                   <span style={{fontSize:12, color:c as any, fontWeight:700, ...mono}}>{v}</span>

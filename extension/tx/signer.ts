@@ -4,7 +4,7 @@
 // references are cleared before returning.
 
 import type { PendingTx } from "./types";
-import { getSession } from "../vault/vault";
+import { getSession, getCachedPrivKey, setCachedPrivKey } from "../vault/vault";
 import { buildKaspaWasmTx } from "./builder";
 import { loadKaspaWasm } from "../../src/wallet/kaspaWasmLoader";
 import { DEFAULT_KASPA_DERIVATION, normalizeKaspaDerivation } from "../../src/wallet/derivation";
@@ -60,55 +60,70 @@ export async function signTransaction(tx: PendingTx): Promise<PendingTx> {
   };
 
   let privKeyRef: unknown = null;
+  const PrivateKey = (kaspa as Record<string, unknown>).PrivateKey as
+    | (new (keyHex: string) => unknown)
+    | undefined;
 
   try {
-    const derivation = normalizeKaspaDerivation(session.derivation ?? DEFAULT_KASPA_DERIVATION);
-    const mnemonic = new Mnemonic(session.mnemonic);
-    const seed = mnemonic.toSeed(session.mnemonicPassphrase || undefined);
-    const masterXPrv = new XPrv(seed);
-    let accountRootXPrv = masterXPrv;
-    try {
-      accountRootXPrv = masterXPrv.derivePath(derivation.path) as typeof masterXPrv;
-    } catch (err) {
-      if (derivation.path.startsWith("m/")) {
-        accountRootXPrv = masterXPrv.derivePath(derivation.path.slice(2)) as typeof masterXPrv;
-      } else {
-        throw err;
+    // B3: Fast path — reuse cached private key if address matches current session
+    const cachedHex = getCachedPrivKey(session.address);
+    if (cachedHex && PrivateKey) {
+      privKeyRef = new PrivateKey(cachedHex);
+    } else {
+      // Full BIP44 derivation
+      const derivation = normalizeKaspaDerivation(session.derivation ?? DEFAULT_KASPA_DERIVATION);
+      const mnemonic = new Mnemonic(session.mnemonic);
+      const seed = mnemonic.toSeed(session.mnemonicPassphrase || undefined);
+      const masterXPrv = new XPrv(seed);
+      let accountRootXPrv = masterXPrv;
+      try {
+        accountRootXPrv = masterXPrv.derivePath(derivation.path) as typeof masterXPrv;
+      } catch (err) {
+        if (derivation.path.startsWith("m/")) {
+          accountRootXPrv = masterXPrv.derivePath(derivation.path.slice(2)) as typeof masterXPrv;
+        } else {
+          throw err;
+        }
       }
-    }
-    const xprvStr = accountRootXPrv.intoString("kprv");
-    const xprvKey = new XPrivateKey(xprvStr, false, BigInt(derivation.account));
-    const pathKey = derivation.chain === 1
-      ? xprvKey.changeKey(derivation.index)
-      : xprvKey.receiveKey(derivation.index);
-    const keypair = pathKey.toKeypair();
+      const xprvStr = accountRootXPrv.intoString("kprv");
+      const xprvKey = new XPrivateKey(xprvStr, false, BigInt(derivation.account));
+      const pathKey = derivation.chain === 1
+        ? xprvKey.changeKey(derivation.index)
+        : xprvKey.receiveKey(derivation.index);
+      const keypair = pathKey.toKeypair();
 
-    // Get PrivateKey instance for Generator.sign()
-    // kaspa-wasm ≥ 0.13.0 exposes it via keypair.privateKey or keypair.toPrivateKey()
-    privKeyRef = keypair.privateKey ?? (
-      typeof (keypair as Record<string, unknown>).toPrivateKey === "function"
-        ? ((keypair as Record<string, unknown>).toPrivateKey as () => unknown)()
-        : null
-    );
-
-    if (!privKeyRef) {
-      // Last resort: construct PrivateKey from the serialised key string if available
-      const PrivateKey = (kaspa as Record<string, unknown>).PrivateKey as
-        | (new (keyHex: string) => unknown)
-        | undefined;
-      const rawKeyStr = typeof (pathKey as Record<string, unknown>).toString === "function"
-        ? (pathKey as Record<string, unknown>).toString("hex")
-        : null;
-      if (PrivateKey && rawKeyStr) {
-        privKeyRef = new PrivateKey(rawKeyStr as string);
-      }
-    }
-
-    if (!privKeyRef) {
-      throw new Error(
-        "PRIVKEY_UNAVAILABLE: Could not extract PrivateKey from keypair. " +
-        "Verify kaspa-wasm version compatibility.",
+      // Get PrivateKey instance for Generator.sign()
+      // kaspa-wasm ≥ 0.13.0 exposes it via keypair.privateKey or keypair.toPrivateKey()
+      privKeyRef = keypair.privateKey ?? (
+        typeof (keypair as Record<string, unknown>).toPrivateKey === "function"
+          ? ((keypair as Record<string, unknown>).toPrivateKey as () => unknown)()
+          : null
       );
+
+      if (!privKeyRef) {
+        // Last resort: construct PrivateKey from the serialised key string if available
+        const rawKeyStr = typeof (pathKey as Record<string, unknown>).toString === "function"
+          ? (pathKey as Record<string, unknown>).toString("hex")
+          : null;
+        if (PrivateKey && rawKeyStr) {
+          privKeyRef = new PrivateKey(rawKeyStr as string);
+          // Cache for subsequent signs this session
+          setCachedPrivKey(session.address, rawKeyStr as string);
+        }
+      } else if (PrivateKey) {
+        // Cache the raw key hex extracted via toString for future fast path
+        const rawKeyStr = typeof (privKeyRef as Record<string, unknown>).toString === "function"
+          ? ((privKeyRef as Record<string, unknown>).toString as (enc?: string) => string)("hex")
+          : null;
+        if (rawKeyStr) setCachedPrivKey(session.address, rawKeyStr);
+      }
+
+      if (!privKeyRef) {
+        throw new Error(
+          "PRIVKEY_UNAVAILABLE: Could not extract PrivateKey from keypair. " +
+          "Verify kaspa-wasm version compatibility.",
+        );
+      }
     }
 
     // ── Build generator transaction ─────────────────────────────────────────

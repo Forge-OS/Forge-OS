@@ -110,14 +110,17 @@ async function setKaswareSendPlan(page: Page, plan: Array<{ txid?: string; error
 async function connectKaswareAndDeploy(page: Page, agentName = "E2E Agent", deployTxId = txid("deploy")) {
   await page.goto("/");
   await setKaswareSendPlan(page, [{ txid: deployTxId }]);
-  await page.getByRole("button", { name: /connect kasware/i }).click();
+  await page.getByRole("button", { name: /connect wallet/i }).click();
+  await page.getByRole("button", { name: /^kasware/i }).click();
+  await expect(page.getByRole("button", { name: /new agent/i })).toBeVisible();
+  await page.getByRole("button", { name: /new agent/i }).click();
   await expect(page.getByText(/configure agent/i)).toBeVisible();
   await page.getByPlaceholder("KAS-Alpha-01").fill(agentName);
   await page.getByRole("button", { name: /^next$/i }).click();
   await page.getByRole("button", { name: /^next$/i }).click();
-  await page.getByRole("button", { name: /deploy agent/i }).click();
+  await page.getByRole("button", { name: /deploy agent.+sign with wallet/i }).click();
   await page.getByRole("button", { name: /^sign & broadcast$/i }).click();
-  await expect(page.getByText(new RegExp(`Forge-OS / AGENT / ${agentName}`, "i"))).toBeVisible();
+  await expect(page.getByRole("button", { name: new RegExp(agentName, "i") })).toBeVisible();
 }
 
 async function injectPendingActionQueueItem(page: Page, opts?: { amountKas?: number; type?: string; purpose?: string }) {
@@ -154,7 +157,7 @@ test.describe("ForgeOS E2E", () => {
   test("wallet gate supports demo mode", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: /enter demo mode/i }).click();
-    await expect(page.getByText(/forge-os \/ new agent/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /new agent/i })).toBeVisible();
     await expect(page.getByText(/DEMO/i)).toBeVisible();
   });
 

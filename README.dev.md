@@ -130,6 +130,22 @@ npm run bench:tx-policy
 TX_BUILDER_LOCAL_WASM_PRIORITY_FEE_MODE=adaptive TX_POLICY_BENCH_CONFIRM_P95_MS=42000 TX_POLICY_BENCH_DAA_CONGESTION_PCT=85 npm run bench:tx-policy
 ```
 
+Quant backtesting harness CLI (JSON in -> JSON out):
+```bash
+npm run backtest:quant -- --input ./data/backtest.json --pretty
+# or
+cat ./data/backtest.json | npm run backtest:quant -- --pretty
+```
+
+Input shape:
+```json
+{
+  "agent": { "risk": "medium", "strategyTemplate": "trend", "capitalLimit": 250 },
+  "snapshots": [{ "ts": 1710000000000, "priceUsd": 0.12, "daaScore": 123456, "walletKas": 5000 }],
+  "config": { "initialCashUsd": 10000, "feeBps": 8, "slippageBps": 6, "warmupSamples": 24, "maxLookback": 240 }
+}
+```
+
 Nightly CI load profile uses the same harness with Redis enabled (see `.github/workflows/nightly-load.yml`).
 
 <details>

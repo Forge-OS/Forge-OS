@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Forge-OS Wallet</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#05070A;color:#e0e0e0;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;padding:0;min-height:100vh}
+  .header{background:#0D1117;border-bottom:1px solid rgba(57,221,182,0.15);padding:20px 0}
+  .header-inner{max-width:760px;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:14px}
+  .logo-mark{width:38px;height:38px;background:#39DDB6;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;color:#05070A;flex-shrink:0}
+  .logo-name{font-size:20px;font-weight:700;color:#fff}
+  .logo-name span{color:#39DDB6}
+  .container{max-width:760px;margin:0 auto;padding:52px 24px 80px}
+  h1{font-size:32px;font-weight:700;color:#fff;margin-bottom:8px;letter-spacing:-0.5px}
+  .meta{font-size:13px;color:rgba(255,255,255,0.35);margin-bottom:48px}
+  h2{font-size:18px;font-weight:700;color:#fff;margin:40px 0 14px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.07)}
+  p{font-size:14px;color:rgba(255,255,255,0.6);margin-bottom:14px}
+  ul{margin:0 0 14px 20px}
+  li{font-size:14px;color:rgba(255,255,255,0.6);margin-bottom:7px}
+  .highlight{background:rgba(57,221,182,0.07);border:1px solid rgba(57,221,182,0.2);border-radius:10px;padding:16px 20px;margin:20px 0}
+  .highlight p{margin:0;color:rgba(255,255,255,0.7);font-size:14px}
+  .highlight strong{color:#39DDB6}
+  code{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:12px;color:#39DDB6}
+  a{color:#39DDB6;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .footer{margin-top:60px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.07);font-size:12px;color:rgba(255,255,255,0.25)}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div class="logo-mark">F</div>
+    <div class="logo-name">Forge<span>.OS</span></div>
+  </div>
+</div>
+
+<div class="container">
+  <h1>Privacy Policy</h1>
+  <div class="meta">Forge-OS Wallet · Effective date: February 27, 2026 · Version 1.0</div>
+
+  <div class="highlight">
+    <p><strong>Short version:</strong> Forge-OS is a non-custodial browser extension. Your seed phrase is encrypted on your device. We do not collect, store, or transmit any personal data or wallet secrets to our servers.</p>
+  </div>
+
+  <h2>1. Who We Are</h2>
+  <p>Forge-OS ("we", "us", "our") is the developer of the Forge-OS Wallet browser extension and the website at <a href="https://forgeos.xyz">forgeos.xyz</a>. The extension is a non-custodial Kaspa wallet that runs entirely on your device.</p>
+
+  <h2>2. Data We Do NOT Collect</h2>
+  <p>We want to be explicit about what we do not do:</p>
+  <ul>
+    <li>We do <strong>not</strong> collect your seed phrase, private keys, or any cryptographic secrets.</li>
+    <li>We do <strong>not</strong> transmit your wallet data to our servers.</li>
+    <li>We do <strong>not</strong> log your transactions or wallet balances.</li>
+    <li>We do <strong>not</strong> use analytics, tracking pixels, or third-party analytics SDKs.</li>
+    <li>We do <strong>not</strong> collect your IP address, device fingerprint, or browsing history.</li>
+    <li>We do <strong>not</strong> require registration or account creation.</li>
+  </ul>
+
+  <h2>3. How Your Wallet Is Stored</h2>
+  <p>Your seed phrase (mnemonic) is stored <strong>exclusively on your device</strong>, encrypted using:</p>
+  <ul>
+    <li><strong>AES-256-GCM</strong> symmetric encryption</li>
+    <li><strong>PBKDF2-SHA256</strong> key derivation with 600,000 iterations (OWASP 2023 compliant)</li>
+    <li>A 256-bit random salt generated fresh for every vault write</li>
+    <li>Chrome's <code>chrome.storage.local</code> API — stored only on your local device, never synced</li>
+  </ul>
+  <p>The encrypted vault blob is opaque without your password. Forge-OS employees have no access to it.</p>
+
+  <h2>4. Network Requests</h2>
+  <p>The extension communicates with the following external services to provide wallet functionality:</p>
+  <ul>
+    <li><strong>api.kaspa.org</strong> (and testnet equivalents) — to fetch UTXO sets, balances, fee estimates, and broadcast signed transactions. These are public Kaspa network APIs. Requests contain your public wallet address but no private data.</li>
+    <li><strong>forgeos.xyz</strong> — the companion website. Standard web traffic applies to page visits.</li>
+  </ul>
+  <p>No data is sent to any other domain. All network requests are visible in Chrome DevTools.</p>
+
+  <h2>5. Permissions Explained</h2>
+  <p>The extension requests the following Chrome permissions and uses them as described:</p>
+  <ul>
+    <li><code>storage</code> — stores your AES-encrypted vault blob and wallet metadata (address + network only) locally.</li>
+    <li><code>alarms</code> — schedules the auto-lock timer that locks your wallet after inactivity.</li>
+    <li><code>clipboardWrite</code> — copies your wallet address when you click the copy button.</li>
+    <li><code>tabs</code> / <code>windows</code> — opens the extension popup for dApp connection approval requests.</li>
+  </ul>
+
+  <h2>6. dApp Connect Permissions</h2>
+  <p>When you connect Forge-OS to a dApp via <code>window.forgeos.connect()</code>, the following information is shared with the requesting site:</p>
+  <ul>
+    <li>Your public wallet address</li>
+    <li>Your current network (mainnet / testnet)</li>
+  </ul>
+  <p>Your private key and seed phrase are <strong>never</strong> shared with any dApp. All signing operations are performed inside the extension's encrypted vault and require your explicit approval.</p>
+
+  <h2>7. Platform Fee</h2>
+  <p>When sending KAS through the extension, a 0.3% platform fee (minimum 0.001 KAS, maximum 1 KAS) is added as a separate output in the transaction payable to the Forge-OS treasury address on-chain. This fee is visible in the transaction confirmation screen before you sign. It is a blockchain transaction and is publicly visible on the Kaspa block explorer.</p>
+
+  <h2>8. Children's Privacy</h2>
+  <p>Forge-OS is not directed to children under the age of 13. We do not knowingly collect any information from children.</p>
+
+  <h2>9. Changes to This Policy</h2>
+  <p>We may update this Privacy Policy. Material changes will be noted in the extension's release notes and on the forgeos.xyz website. The effective date at the top of this document will be updated accordingly.</p>
+
+  <h2>10. Open Source</h2>
+  <p>The Forge-OS extension source code is available for review. You can audit every network request and storage operation yourself.</p>
+
+  <h2>11. Contact</h2>
+  <p>Questions about this Privacy Policy? Contact us at <a href="mailto:privacy@forgeos.xyz">privacy@forgeos.xyz</a> or open an issue on our GitHub repository.</p>
+
+  <div class="footer">
+    <p>Forge-OS Wallet · <a href="https://forgeos.xyz">forgeos.xyz</a> · This policy applies to the browser extension and does not cover third-party services such as api.kaspa.org.</p>
+  </div>
+</div>
+
+</body>
+</html>

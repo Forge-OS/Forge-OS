@@ -33,7 +33,7 @@ export async function aesGcmEncrypt(
   iv: Uint8Array,
   data: Uint8Array,
 ): Promise<Uint8Array> {
-  const buf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
+  const buf = await crypto.subtle.encrypt({ name: "AES-GCM", iv: new Uint8Array(iv) }, key, new Uint8Array(data));
   return new Uint8Array(buf);
 }
 
@@ -51,6 +51,6 @@ export async function aesGcmDecrypt(
   iv: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
-  const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(iv) }, key, new Uint8Array(ciphertext));
   return new Uint8Array(buf);
 }

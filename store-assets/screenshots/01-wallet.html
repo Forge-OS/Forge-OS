@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Forge-OS Screenshot 1 — Wallet</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{width:1280px;height:800px;background:#05070A;font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+
+  /* gradient bg */
+  body::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 900px 600px at 640px 400px,rgba(57,221,182,0.07) 0%,transparent 70%);pointer-events:none}
+
+  /* grid lines */
+  body::after{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(57,221,182,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(57,221,182,0.04) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+
+  .scene{display:flex;align-items:center;gap:80px;z-index:1;position:relative}
+
+  /* annotation side */
+  .copy{width:380px}
+  .logo{display:flex;align-items:center;gap:12px;margin-bottom:36px}
+  .logo-mark{width:44px;height:44px;background:#39DDB6;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#05070A;letter-spacing:-1px}
+  .logo-name{font-size:26px;font-weight:700;color:#FFFFFF;letter-spacing:0.5px}
+  .logo-name span{color:#39DDB6}
+  .tagline{font-size:38px;font-weight:700;color:#fff;line-height:1.15;margin-bottom:20px;letter-spacing:-0.5px}
+  .tagline em{color:#39DDB6;font-style:normal}
+  .sub{font-size:16px;color:rgba(255,255,255,0.5);line-height:1.6;margin-bottom:36px}
+  .pills{display:flex;flex-wrap:wrap;gap:10px}
+  .pill{padding:6px 14px;border-radius:20px;border:1px solid rgba(57,221,182,0.3);color:#39DDB6;font-size:12px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase}
+
+  /* phone/popup mock */
+  .popup-wrap{position:relative}
+  .popup-glow{position:absolute;inset:-30px;background:radial-gradient(ellipse at center,rgba(57,221,182,0.15),transparent 70%);border-radius:50%;pointer-events:none}
+  .popup{width:360px;height:560px;background:#0D1117;border:1px solid rgba(57,221,182,0.2);border-radius:18px;box-shadow:0 40px 120px rgba(0,0,0,0.8),0 0 0 1px rgba(57,221,182,0.1);overflow:hidden;display:flex;flex-direction:column}
+
+  /* popup header */
+  .ph{background:#0D1117;padding:16px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .ph-brand{font-size:15px;font-weight:700;color:#fff;letter-spacing:0.3px}
+  .ph-brand span{color:#39DDB6}
+  .ph-badge{padding:3px 8px;background:rgba(57,221,182,0.12);border:1px solid rgba(57,221,182,0.3);border-radius:10px;font-size:10px;color:#39DDB6;font-weight:600}
+
+  /* nav */
+  .nav{display:flex;background:#090D13;border-bottom:1px solid rgba(255,255,255,0.05)}
+  .nav-item{flex:1;padding:10px 0;text-align:center;font-size:10px;font-weight:600;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer}
+  .nav-item.active{color:#39DDB6;border-bottom:2px solid #39DDB6}
+
+  /* wallet body */
+  .wb{flex:1;padding:20px 18px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+
+  /* balance card */
+  .bal-card{background:linear-gradient(135deg,rgba(57,221,182,0.1) 0%,rgba(57,221,182,0.03) 100%);border:1px solid rgba(57,221,182,0.2);border-radius:14px;padding:20px 18px;text-align:center}
+  .bal-label{font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+  .bal-amount{font-size:32px;font-weight:700;color:#fff;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+  .bal-amount span{font-size:18px;color:#39DDB6;margin-left:4px}
+  .bal-usd{font-size:13px;color:rgba(255,255,255,0.4);margin-top:4px}
+  .bal-addr{font-size:10px;color:rgba(57,221,182,0.6);margin-top:8px;font-family:monospace;letter-spacing:0.3px}
+
+  /* action row */
+  .actions{display:flex;gap:10px}
+  .btn{flex:1;padding:10px 0;border-radius:10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;border:none;cursor:pointer;text-align:center}
+  .btn-primary{background:#39DDB6;color:#05070A}
+  .btn-secondary{background:rgba(57,221,182,0.1);border:1px solid rgba(57,221,182,0.3);color:#39DDB6}
+
+  /* tx list */
+  .tx-section-label{font-size:10px;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:1px;margin-top:2px}
+  .tx-list{display:flex;flex-direction:column;gap:8px}
+  .tx-item{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px}
+  .tx-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+  .tx-icon.in{background:rgba(57,221,182,0.12)}
+  .tx-icon.out{background:rgba(255,80,80,0.12)}
+  .tx-detail{flex:1;min-width:0}
+  .tx-type{font-size:11px;font-weight:600;color:rgba(255,255,255,0.8)}
+  .tx-addr{font-size:9px;color:rgba(255,255,255,0.3);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tx-amount{text-align:right}
+  .tx-kas{font-size:12px;font-weight:700}
+  .tx-kas.in{color:#39DDB6}
+  .tx-kas.out{color:#FF5050}
+  .tx-time{font-size:9px;color:rgba(255,255,255,0.25);margin-top:2px}
+
+  /* footer */
+  .pf{padding:10px 18px;border-top:1px solid rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:space-between}
+  .pf-net{font-size:9px;color:rgba(57,221,182,0.5);font-family:monospace}
+  .pf-bps{font-size:9px;color:rgba(255,255,255,0.25)}
+
+  /* feature callouts */
+  .callouts{position:absolute;left:0;bottom:40px;display:flex;flex-direction:column;gap:8px}
+  .callout{display:flex;align-items:center;gap:10px;opacity:0.8}
+  .callout-dot{width:6px;height:6px;background:#39DDB6;border-radius:50%;flex-shrink:0}
+  .callout-text{font-size:12px;color:rgba(255,255,255,0.5)}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="copy">
+    <div class="logo">
+      <div class="logo-mark">F</div>
+      <div class="logo-name">Forge<span>.OS</span></div>
+    </div>
+    <div class="tagline">Your <em>Kaspa</em> Wallet,<br>Secured by Design.</div>
+    <div class="sub">Non-custodial. AES-256-GCM encrypted vault. Send, receive and swap KAS — right from your browser.</div>
+    <div class="pills">
+      <div class="pill">BIP44</div>
+      <div class="pill">10 BPS</div>
+      <div class="pill">Non-Custodial</div>
+      <div class="pill">Mainnet</div>
+    </div>
+  </div>
+
+  <div class="popup-wrap">
+    <div class="popup-glow"></div>
+    <div class="popup">
+      <div class="ph">
+        <div class="ph-brand">Forge<span>.OS</span></div>
+        <div class="ph-badge">MAINNET</div>
+      </div>
+      <div class="nav">
+        <div class="nav-item active">Wallet</div>
+        <div class="nav-item">Agents</div>
+        <div class="nav-item">Swap</div>
+        <div class="nav-item">Security</div>
+      </div>
+      <div class="wb">
+        <div class="bal-card">
+          <div class="bal-label">Total Balance</div>
+          <div class="bal-amount">12,480.50<span>KAS</span></div>
+          <div class="bal-usd">≈ $1,247.63 USD</div>
+          <div class="bal-addr">kaspa:qpk2…vx9y</div>
+        </div>
+        <div class="actions">
+          <div class="btn btn-primary">Send</div>
+          <div class="btn btn-secondary">Receive</div>
+        </div>
+        <div class="tx-section-label">Recent Activity</div>
+        <div class="tx-list">
+          <div class="tx-item">
+            <div class="tx-icon in">↓</div>
+            <div class="tx-detail">
+              <div class="tx-type">Received</div>
+              <div class="tx-addr">kaspa:qr3f…k8nm</div>
+            </div>
+            <div class="tx-amount">
+              <div class="tx-kas in">+500 KAS</div>
+              <div class="tx-time">2m ago</div>
+            </div>
+          </div>
+          <div class="tx-item">
+            <div class="tx-icon out">↑</div>
+            <div class="tx-detail">
+              <div class="tx-type">Sent</div>
+              <div class="tx-addr">kaspa:qp9a…2mtz</div>
+            </div>
+            <div class="tx-amount">
+              <div class="tx-kas out">-120 KAS</div>
+              <div class="tx-time">1h ago</div>
+            </div>
+          </div>
+          <div class="tx-item">
+            <div class="tx-icon in">↓</div>
+            <div class="tx-detail">
+              <div class="tx-type">Received</div>
+              <div class="tx-addr">kaspa:qq7b…w4pq</div>
+            </div>
+            <div class="tx-amount">
+              <div class="tx-kas in">+1,000 KAS</div>
+              <div class="tx-time">4h ago</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pf">
+        <div class="pf-net">api.kaspa.org</div>
+        <div class="pf-bps">10 BPS · DAA 42.1M</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

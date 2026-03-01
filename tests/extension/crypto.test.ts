@@ -151,3 +151,19 @@ describe("kdf — deriveKey", () => {
     await expect(aesGcmDecrypt(key2, iv, ct)).rejects.toThrow();
   });
 });
+
+describe("kdf — deriveKeyArgon2id", () => {
+  it("derives a decryptable AES-GCM key with deterministic password+salt", async () => {
+    const { deriveKeyArgon2id, randomBytes } = await import("../../extension/vault/kdf");
+    const { aesGcmEncrypt, aesGcmDecrypt } = await import("../../extension/crypto/aes");
+    const salt = randomBytes(32);
+    const params = { memoryMB: 8, iterations: 1, parallelism: 1, hashLength: 32 };
+    const key1 = await deriveKeyArgon2id("argon-pass", salt, params);
+    const key2 = await deriveKeyArgon2id("argon-pass", salt, params);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const message = new TextEncoder().encode("argon-round-trip");
+    const ciphertext = await aesGcmEncrypt(key1, iv, message);
+    const out = await aesGcmDecrypt(key2, iv, ciphertext);
+    expect(new TextDecoder().decode(out)).toBe("argon-round-trip");
+  });
+});

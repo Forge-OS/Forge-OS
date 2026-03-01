@@ -44,7 +44,7 @@ window.addEventListener("message", (ev) => {
 
 function bridgeRequest(type: string, extra?: Record<string, unknown>): Promise<any> {
   return new Promise((resolve, reject) => {
-    const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = crypto.randomUUID();
     const timer = setTimeout(() => {
       pending.delete(requestId);
       reject(new Error("Forge-OS: request timed out"));

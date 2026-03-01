@@ -3,9 +3,10 @@
 // Confirmation: polls /transactions/{txId} until acceptingBlockHash is set.
 
 import type { PendingTx } from "./types";
-import { broadcastTx, fetchTransaction } from "../network/kaspaClient";
+import { broadcastTx } from "../network/kaspaClient";
 import { updatePendingTx } from "./store";
 import { invalidateUtxoCache } from "../utxo/utxoSync";
+import { waitForKaspaConfirmation } from "./receiptReconciler";
 
 const CONFIRM_POLL_INTERVAL_MS = 1_000;   // poll every 1 s — Kaspa confirms at 10 BPS
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;    // give up after 5 min
@@ -84,42 +85,36 @@ export async function pollConfirmation(
 ): Promise<PendingTx> {
   if (!tx.txId) throw new Error("NO_TXID: cannot poll without txId");
 
-  const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
-  let current: PendingTx = { ...tx, state: "CONFIRMING" };
-
-  while (Date.now() < deadline) {
-    await sleep(CONFIRM_POLL_INTERVAL_MS);
-
-    try {
-      const remote = await fetchTransaction(tx.txId, tx.network);
-      if (remote?.acceptingBlockHash) {
-        current = {
-          ...current,
-          state: "CONFIRMED",
-          confirmations: 1,
-          confirmedAt: Date.now(),
-          signedTxPayload: undefined,
+  let probeAttempts = 0;
+  const reconciled = await waitForKaspaConfirmation(
+    { ...tx, state: "CONFIRMING" },
+    {
+      timeoutMs: CONFIRM_TIMEOUT_MS,
+      pollIntervalMs: CONFIRM_POLL_INTERVAL_MS,
+      onProbe: async (probe) => {
+        probeAttempts += 1;
+        const pendingUpdate: PendingTx = {
+          ...tx,
+          state: "CONFIRMING",
+          receiptCheckedAt: probe.checkedAt,
+          receiptProbeAttempts: probeAttempts,
+          receiptSourceBackend: probe.backend.source,
+          receiptSourceReason: probe.backend.reason,
+          receiptSourceEndpoint: probe.backend.activeEndpoint,
+          acceptingBlockHash: probe.acceptingBlockHash,
         };
-        await updatePendingTx(current);
-        onUpdate(current);
-        return current;
-      }
-    } catch { /* network blip — keep polling */ }
+        await updatePendingTx(pendingUpdate);
+        onUpdate(pendingUpdate);
+      },
+    },
+  );
+
+  await updatePendingTx(reconciled);
+  onUpdate(reconciled);
+  if (reconciled.state === "FAILED") {
+    throw new Error(reconciled.error || "CONFIRM_TIMEOUT");
   }
-
-  // Timeout: mark as failed (tx may still confirm later on chain)
-  current = {
-    ...current,
-    state: "FAILED",
-    error: "CONFIRM_TIMEOUT: transaction not confirmed within 5 minutes",
-  };
-  await updatePendingTx(current);
-  onUpdate(current);
-  throw new Error(current.error!);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return reconciled;
 }
 
 /**

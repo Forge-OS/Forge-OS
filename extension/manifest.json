@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Forge-OS",
   "version": "1.0.0",
-  "description": "Non-custodial Kaspa wallet — send, receive, DEX & swaps, AI agents. AES-256-GCM + PBKDF2. BIP44. Mainnet, TN10, TN11 & TN12.",
+  "description": "Non-custodial Kaspa wallet — send, receive, DEX & swaps, AI agents. AES-256-GCM + Argon2id (legacy PBKDF2 migration). BIP44. Mainnet, TN10, TN11 & TN12.",
   "action": {
     "default_popup": "popup/index.html",
     "default_icon": {
@@ -43,7 +43,11 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage", "alarms", "clipboardWrite", "tabs", "windows"],
+  "permissions": ["storage", "alarms", "clipboardWrite", "tabs", "windows", "permissions"],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "host_permissions": [
     "https://api.kaspa.org/*",
     "https://api-tn10.kaspa.org/*",

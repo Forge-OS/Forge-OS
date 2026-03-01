@@ -432,7 +432,7 @@ export function SwapView() {
           "KRC20 token swaps activate with the Kaspa native asset layer.",
           "Paste any KRC20/KRC721 contract address in the token picker.",
           "Non-custodial — keys never leave your device or the extension vault.",
-          "AES-256-GCM encrypted vault, PBKDF2 600k iterations.",
+          "AES-256-GCM encrypted vault, Argon2id KDF (legacy PBKDF2 vaults auto-migrate).",
         ].map((note, i) => (
           <div key={i} style={{ display: "flex", gap: 8, marginBottom: i < 3 ? 5 : 0 }}>
             <span style={{ color: C.accent, fontSize: 10, flexShrink: 0 }}>›</span>

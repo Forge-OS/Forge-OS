@@ -1,6 +1,6 @@
 export const DEFS = {
   name: "", kpiTarget: "12", capitalLimit: "5000", risk: "medium", execMode: "manual",
-  autoApproveThreshold: "50",
+  autoApproveThreshold: "100",
   kpiMetric: "ROI %", horizon: 30, revenueSource: "momentum",
   dataSources: ["KAS On-Chain", "Kaspa DAG"], frequency: "1h",
   strategyTemplate: "dca_accumulator",
@@ -17,6 +17,9 @@ export const DEFS = {
   maxDailyActions: "8",
   cooldownCycles: "1",
   pnlTracking: "kas-native",
+  // "accumulate_only" = only ACCUMULATE + HOLD execute (REDUCE / REBALANCE blocked)
+  // "full"           = all action signals can execute
+  actionMode: "accumulate_only",
   // KAS/USDC pair params (activated when Kaspa enables native stablecoins)
   pairMode: "accumulation",        // "accumulation" | "kas-usdc" | "dual"
   stableEntryBias: "0.6",          // 0–1: how much to weight stable entry (buy dips with USDC)
@@ -41,7 +44,7 @@ export const STRATEGY_TEMPLATES = [
       revenueSource: "accumulation", execMode: "manual", autoApproveThreshold: "25",
       stopLossPct: "3.0", takeProfitPct: "8.0", minConfidence: "60",
       positionSizing: "half-kelly", daaVelocityFilter: "0", maxDailyActions: "6",
-      cooldownCycles: "2", pairMode: "accumulation",
+      cooldownCycles: "2", pairMode: "accumulation", actionMode: "accumulate_only",
     },
   },
   {
@@ -58,7 +61,7 @@ export const STRATEGY_TEMPLATES = [
       revenueSource: "trend", execMode: "manual", autoApproveThreshold: "40",
       stopLossPct: "5.0", takeProfitPct: "14.0", minConfidence: "58",
       positionSizing: "kelly", daaVelocityFilter: "2", maxDailyActions: "10",
-      cooldownCycles: "1", pairMode: "accumulation",
+      cooldownCycles: "1", pairMode: "accumulation", actionMode: "full",
     },
   },
   {
@@ -75,7 +78,7 @@ export const STRATEGY_TEMPLATES = [
       revenueSource: "mean-reversion", execMode: "manual", autoApproveThreshold: "20",
       stopLossPct: "3.5", takeProfitPct: "9.0", minConfidence: "62",
       positionSizing: "half-kelly", daaVelocityFilter: "0", maxDailyActions: "8",
-      cooldownCycles: "2", pairMode: "accumulation",
+      cooldownCycles: "2", pairMode: "accumulation", actionMode: "full",
     },
   },
   {
@@ -92,7 +95,24 @@ export const STRATEGY_TEMPLATES = [
       revenueSource: "breakout", execMode: "notify", autoApproveThreshold: "15",
       stopLossPct: "6.0", takeProfitPct: "18.0", minConfidence: "52",
       positionSizing: "kelly", daaVelocityFilter: "5", maxDailyActions: "12",
-      cooldownCycles: "1", pairMode: "accumulation",
+      cooldownCycles: "1", pairMode: "accumulation", actionMode: "full",
+    },
+  },
+  {
+    id: "dca_bot",
+    name: "DCA Accumulation Bot",
+    tag: "AUTO-DCA",
+    tagColor: "#39DDB6",
+    class: "accumulation",
+    purpose: "Set-and-forget KAS accumulation. Buys every qualifying cycle automatically — no wallet clicks needed.",
+    bestFor: "Long-term KAS holders who want hands-free accumulation without watching charts.",
+    desc: "Fully autonomous DCA with loose thresholds and maximum auto-approve rate. Deploy once, let it run.",
+    defaults: {
+      risk: "low", kpiTarget: "10", horizon: 180, frequency: "4h",
+      revenueSource: "accumulation", execMode: "autonomous", autoApproveThreshold: "500",
+      stopLossPct: "5.0", takeProfitPct: "15.0", minConfidence: "50",
+      positionSizing: "half-kelly", daaVelocityFilter: "0", maxDailyActions: "6",
+      cooldownCycles: "2", pairMode: "accumulation", actionMode: "accumulate_only",
     },
   },
   {
@@ -109,7 +129,7 @@ export const STRATEGY_TEMPLATES = [
       revenueSource: "pair-trading", execMode: "autonomous", autoApproveThreshold: "60",
       stopLossPct: "4.0", takeProfitPct: "12.0", minConfidence: "65",
       positionSizing: "kelly", daaVelocityFilter: "0", maxDailyActions: "20",
-      cooldownCycles: "0", pairMode: "kas-usdc",
+      cooldownCycles: "0", pairMode: "kas-usdc", actionMode: "full",
       stableEntryBias: "0.7", stableExitBias: "0.5", usdcSlippageTolerance: "0.5",
     },
   },
@@ -132,7 +152,7 @@ export const PROFESSIONAL_PRESETS = [
       revenueSource: "market-making", execMode: "autonomous", autoApproveThreshold: "100",
       stopLossPct: "2.0", takeProfitPct: "4.0", minConfidence: "70",
       positionSizing: "fixed", daaVelocityFilter: "0", maxDailyActions: "48",
-      cooldownCycles: "0", pairMode: "kas-usdc",
+      cooldownCycles: "0", pairMode: "kas-usdc", actionMode: "full",
     },
   },
   {

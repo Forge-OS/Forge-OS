@@ -1,0 +1,130 @@
+<svg width="440" height="280" viewBox="0 0 440 280" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <radialGradient id="bg-glow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#39DDB6" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#05070A" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="accent-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#39DDB6" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#39DDB6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#39DDB6" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#39DDB6" stop-opacity="0.03"/>
+    </linearGradient>
+    <filter id="glow-filter">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <clipPath id="clip-rounded">
+      <rect width="440" height="280" rx="0"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="440" height="280" fill="#05070A"/>
+
+  <!-- Grid lines -->
+  <g stroke="#39DDB6" stroke-opacity="0.04" stroke-width="1">
+    <line x1="0" y1="40" x2="440" y2="40"/>
+    <line x1="0" y1="80" x2="440" y2="80"/>
+    <line x1="0" y1="120" x2="440" y2="120"/>
+    <line x1="0" y1="160" x2="440" y2="160"/>
+    <line x1="0" y1="200" x2="440" y2="200"/>
+    <line x1="0" y1="240" x2="440" y2="240"/>
+    <line x1="40" y1="0" x2="40" y2="280"/>
+    <line x1="80" y1="0" x2="80" y2="280"/>
+    <line x1="120" y1="0" x2="120" y2="280"/>
+    <line x1="160" y1="0" x2="160" y2="280"/>
+    <line x1="200" y1="0" x2="200" y2="280"/>
+    <line x1="240" y1="0" x2="240" y2="280"/>
+    <line x1="280" y1="0" x2="280" y2="280"/>
+    <line x1="320" y1="0" x2="320" y2="280"/>
+    <line x1="360" y1="0" x2="360" y2="280"/>
+    <line x1="400" y1="0" x2="400" y2="280"/>
+  </g>
+
+  <!-- BG glow -->
+  <ellipse cx="220" cy="140" rx="260" ry="160" fill="url(#bg-glow)"/>
+
+  <!-- Right side mini popup mock -->
+  <g transform="translate(268, 28)">
+    <!-- popup body -->
+    <rect x="0" y="0" width="148" height="224" rx="12" fill="#0D1117" stroke="#39DDB6" stroke-opacity="0.2" stroke-width="1"/>
+    <!-- header -->
+    <rect x="0" y="0" width="148" height="32" rx="12" fill="#0D1117"/>
+    <rect x="0" y="20" width="148" height="12" fill="#0D1117"/>
+    <rect x="0" y="31" width="148" height="1" fill="#ffffff" fill-opacity="0.06"/>
+    <text x="12" y="20" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="10" font-weight="700" fill="white">Forge<tspan fill="#39DDB6">.OS</tspan></text>
+    <rect x="100" y="10" width="36" height="14" rx="7" fill="#39DDB6" fill-opacity="0.12" stroke="#39DDB6" stroke-opacity="0.3" stroke-width="1"/>
+    <text x="118" y="20" font-family="sans-serif" font-size="7" font-weight="600" fill="#39DDB6" text-anchor="middle">MAINNET</text>
+
+    <!-- balance card -->
+    <rect x="10" y="42" width="128" height="62" rx="8" fill="url(#card-grad)" stroke="#39DDB6" stroke-opacity="0.2" stroke-width="1"/>
+    <text x="74" y="59" font-family="sans-serif" font-size="7" fill="white" fill-opacity="0.4" text-anchor="middle" letter-spacing="0.5">TOTAL BALANCE</text>
+    <text x="74" y="77" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="16" font-weight="700" fill="white" text-anchor="middle">12,480</text>
+    <text x="116" y="76" font-family="sans-serif" font-size="9" font-weight="600" fill="#39DDB6">KAS</text>
+    <text x="74" y="90" font-family="sans-serif" font-size="7" fill="white" fill-opacity="0.35" text-anchor="middle">≈ $1,247.63 USD</text>
+
+    <!-- buttons -->
+    <rect x="10" y="114" width="58" height="22" rx="6" fill="#39DDB6"/>
+    <text x="39" y="128" font-family="sans-serif" font-size="8" font-weight="700" fill="#05070A" text-anchor="middle">SEND</text>
+    <rect x="76" y="114" width="62" height="22" rx="6" fill="#39DDB6" fill-opacity="0.1" stroke="#39DDB6" stroke-opacity="0.3" stroke-width="1"/>
+    <text x="107" y="128" font-family="sans-serif" font-size="8" font-weight="700" fill="#39DDB6" text-anchor="middle">RECEIVE</text>
+
+    <!-- tx items -->
+    <rect x="10" y="146" width="128" height="22" rx="6" fill="white" fill-opacity="0.03" stroke="white" stroke-opacity="0.06" stroke-width="1"/>
+    <rect x="16" y="151" width="12" height="12" rx="3" fill="#39DDB6" fill-opacity="0.12"/>
+    <text x="22" y="160" font-family="sans-serif" font-size="9" fill="#39DDB6" text-anchor="middle">↓</text>
+    <text x="35" y="158" font-family="sans-serif" font-size="7" font-weight="600" fill="white" fill-opacity="0.7">Received</text>
+    <text x="35" y="166" font-family="monospace" font-size="6" fill="white" fill-opacity="0.3">kaspa:qr3f…k8nm</text>
+    <text x="132" y="160" font-family="sans-serif" font-size="8" font-weight="700" fill="#39DDB6" text-anchor="end">+500</text>
+
+    <rect x="10" y="174" width="128" height="22" rx="6" fill="white" fill-opacity="0.03" stroke="white" stroke-opacity="0.06" stroke-width="1"/>
+    <rect x="16" y="179" width="12" height="12" rx="3" fill="#FF5050" fill-opacity="0.12"/>
+    <text x="22" y="188" font-family="sans-serif" font-size="9" fill="#FF5050" text-anchor="middle">↑</text>
+    <text x="35" y="186" font-family="sans-serif" font-size="7" font-weight="600" fill="white" fill-opacity="0.7">Sent</text>
+    <text x="35" y="194" font-family="monospace" font-size="6" fill="white" fill-opacity="0.3">kaspa:qp9a…2mtz</text>
+    <text x="132" y="186" font-family="sans-serif" font-size="8" font-weight="700" fill="#FF5050" text-anchor="end">-120</text>
+
+    <!-- footer -->
+    <rect x="0" y="213" width="148" height="1" fill="white" fill-opacity="0.06"/>
+    <text x="10" y="221" font-family="monospace" font-size="6" fill="#39DDB6" fill-opacity="0.5">api.kaspa.org</text>
+    <text x="138" y="221" font-family="monospace" font-size="6" fill="white" fill-opacity="0.25" text-anchor="end">10 BPS</text>
+  </g>
+
+  <!-- Left side text content -->
+  <!-- Logo mark -->
+  <rect x="28" y="30" width="40" height="40" rx="10" fill="#39DDB6"/>
+  <text x="48" y="57" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="22" font-weight="900" fill="#05070A" text-anchor="middle">F</text>
+
+  <!-- Brand name -->
+  <text x="77" y="53" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="20" font-weight="700" fill="white">Forge<tspan fill="#39DDB6">.OS</tspan></text>
+
+  <!-- Headline -->
+  <text x="28" y="108" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="28" font-weight="700" fill="white" letter-spacing="-0.5">Your Kaspa</text>
+  <text x="28" y="140" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="28" font-weight="700" fill="#39DDB6" letter-spacing="-0.5">Wallet.</text>
+
+  <!-- Subline -->
+  <text x="28" y="167" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="12" fill="white" fill-opacity="0.45">Non-custodial. AES-256-GCM. BIP44.</text>
+  <text x="28" y="183" font-family="'SF Pro Display',-apple-system,sans-serif" font-size="12" fill="white" fill-opacity="0.45">Send, receive, and connect to dApps.</text>
+
+  <!-- Pills row -->
+  <g transform="translate(28, 200)">
+    <rect x="0" y="0" width="58" height="20" rx="10" fill="none" stroke="#39DDB6" stroke-opacity="0.3" stroke-width="1"/>
+    <text x="29" y="13.5" font-family="sans-serif" font-size="9" font-weight="600" fill="#39DDB6" text-anchor="middle" letter-spacing="0.3">10 BPS</text>
+
+    <rect x="66" y="0" width="76" height="20" rx="10" fill="none" stroke="#39DDB6" stroke-opacity="0.3" stroke-width="1"/>
+    <text x="104" y="13.5" font-family="sans-serif" font-size="9" font-weight="600" fill="#39DDB6" text-anchor="middle" letter-spacing="0.3">NON-CUSTODIAL</text>
+
+    <rect x="150" y="0" width="62" height="20" rx="10" fill="none" stroke="#39DDB6" stroke-opacity="0.3" stroke-width="1"/>
+    <text x="181" y="13.5" font-family="sans-serif" font-size="9" font-weight="600" fill="#39DDB6" text-anchor="middle" letter-spacing="0.3">BIP44</text>
+  </g>
+
+  <!-- Bottom accent line -->
+  <rect x="28" y="244" width="180" height="1" fill="#39DDB6" fill-opacity="0.2"/>
+  <text x="28" y="261" font-family="monospace" font-size="9" fill="white" fill-opacity="0.2">forgeos.xyz</text>
+
+  <!-- Glow on popup -->
+  <ellipse cx="342" cy="140" rx="80" ry="100" fill="url(#accent-glow)"/>
+</svg>

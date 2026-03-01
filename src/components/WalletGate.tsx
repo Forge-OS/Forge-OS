@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { DEFAULT_NETWORK, DEMO_ADDRESS, NETWORK_LABEL } from "../constants";
 import { C, mono } from "../tokens";
-import { Badge, Card, Divider } from "./ui";
+import { Badge } from "./ui";
 import { ForgeAtmosphere } from "./chrome/ForgeAtmosphere";
 import { WalletCreator } from "./WalletCreator";
+import { WebWalletSetup } from "./WebWalletSetup";
 
 // Protocol capability blocks
 const PROTOCOL_STACK = [
@@ -69,11 +70,11 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
   };
 
   return (
-    <div className="forge-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", minHeight: "100vh", padding: "clamp(8px, 2vw, 12px)", backgroundColor: C.bg }}>
+    <div className="forge-shell forge-wallet-gate-root" style={{ display: "flex", flexDirection: "column", alignItems: "center", minHeight: "100vh", padding: "clamp(8px, 2vw, 12px)", backgroundColor: C.bg }}>
       <ForgeAtmosphere />
 
       {/* Top brand row (no tab/chrome background) */}
-      <div style={{ width: "100%", maxWidth: 1600, display: "flex", alignItems: "center", padding: "4px clamp(16px, 3vw, 36px) 0" }}>
+      <div className="forge-wallet-gate-top-row" style={{ width: "100%", maxWidth: 1600, display: "flex", alignItems: "center", padding: "4px clamp(16px, 3vw, 36px) 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <img
             src="/forge-os-icon3.png"
@@ -93,15 +94,15 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
       </div>
 
       {/* ── FULL-WIDTH CENTERED HERO ── */}
-      <div style={{ width: "100%", maxWidth: 1100, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "clamp(28px,5vw,56px) clamp(16px,3vw,32px) clamp(20px,3vw,36px)" }}>
+      <div data-testid="wallet-gate-hero" className="forge-wallet-gate-hero" style={{ width: "100%", maxWidth: 1100, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "clamp(28px,5vw,56px) clamp(16px,3vw,32px) clamp(20px,3vw,36px)" }}>
         <div aria-hidden style={{ height: 12 }} />
-        <h1 style={{ font: `700 clamp(32px,5.5vw,64px)/1.1 'IBM Plex Mono',monospace`, letterSpacing: "0.03em", margin: 0, color: C.text, textWrap: "balance" as any }}>
+        <h1 className="forge-wallet-gate-hero-title" style={{ font: `700 clamp(32px,5.5vw,64px)/1.1 'IBM Plex Mono',monospace`, letterSpacing: "0.03em", margin: 0, color: C.text, textWrap: "balance" as any }}>
           <span style={{ color: C.accent, textShadow: "0 0 30px rgba(57,221,182,0.55)" }}>KAS / USDC</span>
           <span style={{ color: C.text, fontWeight: 800 }}> AI TRADING</span>
           <br />
           <span style={{ color: C.dim, fontWeight: 500, fontSize: "0.65em", letterSpacing: "0.06em" }}>⚡ BLOCKDAG SPEED</span>
         </h1>
-        <p style={{ font: `500 15px/1.6 'Space Grotesk','Segoe UI',sans-serif`, color: "#9db0c6", maxWidth: "64ch", margin: 0 }}>
+        <p className="forge-wallet-gate-hero-copy" style={{ font: `500 15px/1.6 'Space Grotesk','Segoe UI',sans-serif`, color: "#9db0c6", maxWidth: "64ch", margin: 0 }}>
           Full-stack DeFi for Kaspa. Agents accumulate KAS today — and flip to active profit trading the moment stablecoins, KRC-20, and Kaspa 0x swaps go live.
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
@@ -113,7 +114,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
       </div>
 
       {/* ── MAIN CONTENT GRID ── */}
-      <div className="forge-content forge-gate-responsive" style={{ width: "100%", maxWidth: 1600, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(360px,520px)", gap: "clamp(20px, 3vw, 40px)", alignItems: "flex-start", padding: "0 clamp(12px,2vw,24px)" }}>
+      <div data-testid="wallet-gate-content" className="forge-content forge-gate-responsive" style={{ width: "100%", maxWidth: 1600, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(360px,520px)", gap: "clamp(20px, 3vw, 40px)", alignItems: "flex-start", padding: "0 clamp(12px,2vw,24px)" }}>
 
         {/* ── INFO COLUMN ── */}
         <section style={{ display: "flex", flexDirection: "column", gap: 6, justifySelf: "center", width: "100%", maxWidth: 910, textAlign: "center" }}>
@@ -121,7 +122,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           {/* Protocol stack grid */}
           <div style={{ width: "100%" }}>
             <div style={{ fontSize: 10, color: C.dim, ...mono, letterSpacing: "0.16em", marginBottom: 8, textAlign: "center" }}>PROTOCOL CAPABILITIES</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
+            <div className="forge-wallet-gate-protocol-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
               {PROTOCOL_STACK.map((item) => (
                 <div key={item.title}
                   style={{
@@ -145,7 +146,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           </div>
 
           {/* Architecture strip */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, width: "100%" }}>
+          <div className="forge-wallet-gate-arch-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, width: "100%" }}>
             {[
               ["EXECUTION", "Wallet-native signing + queue lifecycle management"],
               ["TRUTH", "Receipt-aware P&L attribution + consistency checks"],
@@ -159,7 +160,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           </div>
 
           {/* Key numbers */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, width: "100%" }}>
+          <div className="forge-wallet-gate-key-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, width: "100%" }}>
             {[
               { v: "BlockDAG", l: "Settlement speed" },
               { v: "Non-Custodial", l: "Keys stay in wallet" },
@@ -196,111 +197,12 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
         {/* ── CONNECT COLUMN ── */}
         <div className="forge-connect-column" style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: "clamp(-35px,-3vw,-18px)" }}>
           <div aria-hidden style={{ height: "clamp(34px, 5vw, 52px)" }} />
-
-          {/* Connect card */}
-          <Card p={20} style={{ border: `1px solid rgba(57,221,182,0.14)` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <div style={{ fontSize: 16, color: C.text, fontWeight: 700, ...mono }}>Connect Wallet</div>
-              <Badge text={NETWORK_LABEL} color={C.ok} dot />
-            </div>
-            <div style={{ fontSize: 12, color: C.dim, marginBottom: 16 }}>
-              All operations are wallet-native. Forge-OS never stores private keys or signs on your behalf.
-            </div>
-
-            {/* Primary CTA — Sign In / Connect opens extension popup + wallet list */}
-            <button
-              onClick={onSignInClick}
-              style={{
-                width: "100%",
-                background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
-                border: "none",
-                borderRadius: 10,
-                cursor: "pointer",
-                color: "#04110E",
-                fontSize: 14,
-                ...mono,
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                padding: "16px 0",
-                boxShadow: "0 4px 20px rgba(57,221,182,0.28)",
-                marginBottom: 10,
-                transition: "box-shadow 0.15s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 28px rgba(57,221,182,0.44)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 20px rgba(57,221,182,0.28)"; }}
-            >
-              CONNECT WALLET →
-            </button>
-
-            {/* Optional demo path */}
-            <div style={{ marginBottom: 10 }}>
-              <button
-                onClick={enterDemoMode}
-                style={{
-                  width: "100%",
-                  background: "rgba(11,17,24,0.85)",
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 8,
-                  cursor: "pointer",
-                  color: C.text,
-                  fontSize: 10,
-                  ...mono,
-                  fontWeight: 700,
-                  letterSpacing: "0.08em",
-                  padding: "10px 0",
-                }}
-              >
-                ENTER DEMO MODE
-              </button>
-            </div>
-
-            {/* Secondary option — create / import wallet */}
-            <button
-              onClick={() => setShowCreator(true)}
-              style={{
-                width: "100%",
-                background: "linear-gradient(135deg, rgba(57,221,182,0.06) 0%, rgba(8,13,20,0.55) 100%)",
-                border: `1px solid ${C.accent}28`,
-                borderRadius: 10,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "12px 16px",
-                marginBottom: 16,
-                transition: "border-color 0.15s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = `${C.accent}55`; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = `${C.accent}28`; }}
-            >
-              <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: 11, color: C.text, ...mono, fontWeight: 700, marginBottom: 2 }}>New to Kaspa?</div>
-                <div style={{ fontSize: 10, color: C.dim }}>Create or import a wallet</div>
-              </div>
-              <span style={{ fontSize: 11, color: C.accent, ...mono, fontWeight: 700, letterSpacing: "0.06em", flexShrink: 0, marginLeft: 8 }}>
-                CREATE ›
-              </span>
-            </button>
-
-            <Divider m={14} />
-            <div style={{ fontSize: 10, color: C.dim, ...mono, lineHeight: 1.5 }}>
-              Forge-OS never requests your private key · All signing happens inside your wallet · {NETWORK_LABEL}
-            </div>
-          </Card>
-
-          {/* KAS/USDC readiness notice */}
-          <div style={{
-            background: `linear-gradient(135deg, ${C.purple}10 0%, rgba(8,13,20,0.5) 100%)`,
-            border: `1px solid ${C.purple}28`,
-            borderRadius: 10, padding: "14px 18px",
-          }}>
-            <div style={{ fontSize: 10, color: C.purple, fontWeight: 700, ...mono, letterSpacing: "0.12em", marginBottom: 6 }}>KASPA STABLECOIN UPGRADE · READY</div>
-            <div style={{ fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
-              Agents accumulate KAS now. When Kaspa stablecoins launch at L1, agents automatically
-              switch to active buy/sell — buying dips, selling strength, and booking profit in USD.
-              KRC-20 tokens and Kaspa 0x swaps are already in the engine. No migration, no downtime.
-            </div>
-          </div>
+          <WebWalletSetup
+            networkLabel={NETWORK_LABEL}
+            onSignInClick={onSignInClick}
+            onEnterDemoMode={enterDemoMode}
+            onOpenCreator={() => setShowCreator(true)}
+          />
         </div>
       </div>
 
@@ -309,6 +211,81 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
         @media (max-width: 1200px) {
           .forge-gate-responsive { grid-template-columns: 1fr !important; max-width: 800px; }
           .forge-connect-column { margin-top: 10px !important; }
+        }
+
+        @media (max-width: 900px) {
+          .forge-wallet-gate-root {
+            padding: 8px 6px 18px !important;
+          }
+
+          .forge-wallet-gate-top-row {
+            justify-content: center !important;
+            padding: 2px 8px 0 !important;
+          }
+
+          .forge-wallet-gate-hero {
+            max-width: 100% !important;
+            padding: 20px 10px 14px !important;
+            gap: 10px !important;
+          }
+
+          .forge-wallet-gate-hero-title {
+            font-size: clamp(26px, 9vw, 38px) !important;
+            line-height: 1.15 !important;
+          }
+
+          .forge-wallet-gate-hero-copy {
+            font-size: 13px !important;
+            max-width: 100% !important;
+          }
+
+          .forge-gate-responsive {
+            padding: 0 8px !important;
+            gap: 12px !important;
+          }
+
+          .forge-connect-column {
+            margin-top: 0 !important;
+          }
+
+          .forge-wallet-gate-protocol-grid,
+          .forge-wallet-gate-arch-grid,
+          .forge-wallet-gate-key-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .forge-wallet-gate-protocol-grid,
+          .forge-wallet-gate-arch-grid,
+          .forge-wallet-gate-key-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+
+        @media (max-width: 430px) {
+          .forge-wallet-gate-root {
+            padding: 6px 4px 14px !important;
+          }
+
+          .forge-wallet-gate-hero {
+            padding: 16px 8px 12px !important;
+          }
+
+          .forge-wallet-gate-hero-title {
+            font-size: clamp(23px, 8.8vw, 30px) !important;
+          }
+
+          .forge-wallet-gate-hero-copy {
+            font-size: 12px !important;
+            line-height: 1.5 !important;
+          }
+
+          .forge-wallet-gate-protocol-grid > div,
+          .forge-wallet-gate-arch-grid > div,
+          .forge-wallet-gate-key-grid > div {
+            padding: 10px !important;
+          }
         }
       `}</style>
 

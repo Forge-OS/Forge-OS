@@ -62,6 +62,14 @@ export interface PendingTx {
   // Result
   txId?: string;          // Set after broadcast
   confirmations?: number; // Set during polling
+  acceptingBlockHash?: string | null;
+
+  // Receipt reconciliation (backend-aware)
+  receiptCheckedAt?: number;
+  receiptProbeAttempts?: number;
+  receiptSourceBackend?: "local" | "remote";
+  receiptSourceReason?: string;
+  receiptSourceEndpoint?: string | null;
 
   // Error (if state === FAILED)
   error?: string;
@@ -69,6 +77,11 @@ export interface PendingTx {
   // Serialised signed transaction (hex or JSON string) for broadcast
   // Cleared after confirmation to reduce storage size
   signedTxPayload?: string;
+
+  // Optional agent job identifier (for OP_RETURN receipt anchoring)
+  agentJobId?: string;
+  // Optional OP_RETURN data hex (0-byte-value output, max 80 bytes payload)
+  opReturnHex?: string;
 }
 
 // Storage key for pending tx list

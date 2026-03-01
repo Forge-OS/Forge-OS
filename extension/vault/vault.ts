@@ -9,13 +9,13 @@
 //  5. changePassword() re-encrypts atomically — old ciphertext is overwritten.
 //  6. resetWallet() wipes all extension storage (full hard reset).
 
-import type { EncryptedVault, VaultPayload, UnlockedSession } from "./types";
+import type { EncryptedVault, EncryptedVaultV2, VaultPayload, UnlockedSession } from "./types";
 import {
   DEFAULT_KASPA_DERIVATION,
   normalizeKaspaDerivation,
   type KaspaDerivationMeta,
 } from "../../src/wallet/derivation";
-import { deriveKey, randomBytes } from "./kdf";
+import { deriveKey, deriveKeyArgon2id, randomBytes, DEFAULT_ARGON_PARAMS } from "./kdf";
 import { aesGcmEncrypt, aesGcmDecrypt, hexToBytes, bytesToHex } from "../crypto/aes";
 
 // Storage keys
@@ -47,6 +47,20 @@ export interface UnlockOptions {
 // ── In-memory session (popup context only) ───────────────────────────────────
 // Primary runtime session cache for decrypted key material.
 let _session: UnlockedSession | null = null;
+
+// ── Private key cache (session-lifetime) ─────────────────────────────────────
+// Caches the serialised BIP44-derived private key so repeated signTransaction()
+// calls within the same session skip the expensive Mnemonic→XPrv derivation.
+// Cleared alongside the session on lock/wipe.
+let _cachedPrivKey: { address: string; keyHex: string } | null = null;
+
+export function getCachedPrivKey(address: string): string | null {
+  return _cachedPrivKey?.address === address ? _cachedPrivKey.keyHex : null;
+}
+
+export function setCachedPrivKey(address: string, keyHex: string): void {
+  _cachedPrivKey = { address, keyHex };
+}
 
 function resolveAutoLockAt(minutes: number): number {
   if (!Number.isFinite(minutes) || minutes <= 0) return Number.POSITIVE_INFINITY;
@@ -100,6 +114,7 @@ function _wipeSession(): void {
     try { (_session as Record<string, unknown>).mnemonic = ""; } catch { /* noop */ }
     _session = null;
   }
+  _cachedPrivKey = null;
 }
 
 // ── Chrome storage helpers ───────────────────────────────────────────────────
@@ -228,7 +243,8 @@ export async function createVault(
   const salt = randomBytes(32);
   const iv = randomBytes(12);
 
-  const key = await deriveKey(password, salt);
+  const argonParams = DEFAULT_ARGON_PARAMS;
+  const key = await deriveKeyArgon2id(password, salt, argonParams);
   const derivation = normalizeKaspaDerivation(options.derivation ?? DEFAULT_KASPA_DERIVATION);
 
   const payload: VaultPayload = {
@@ -246,12 +262,11 @@ export async function createVault(
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
   const ciphertext = await aesGcmEncrypt(key, iv, plaintext);
 
-  const vault: EncryptedVault = {
-    version: 1,
-    kdf: "pbkdf2",
+  const vault: EncryptedVaultV2 = {
+    version: 2,
+    kdf: "argon2id",
+    argon: argonParams,
     salt: bytesToHex(salt),
-    iterations: 600_000,
-    hash: "SHA-256",
     iv: bytesToHex(iv),
     ciphertext: bytesToHex(ciphertext),
     createdAt: (await readVault())?.createdAt ?? Date.now(),
@@ -284,7 +299,14 @@ export async function unlockVault(
   const iv = hexToBytes(vault.iv);
   const ciphertext = hexToBytes(vault.ciphertext);
 
-  const key = await deriveKey(password, salt);
+  // D4: Select KDF based on vault version
+  let key: CryptoKey;
+  if (vault.version === 2 && vault.kdf === "argon2id") {
+    key = await deriveKeyArgon2id(password, salt, vault.argon);
+  } else {
+    // v1: PBKDF2-SHA-256
+    key = await deriveKey(password, salt);
+  }
 
   let plaintext: Uint8Array;
   try {
@@ -316,6 +338,20 @@ export async function unlockVault(
   scheduleOrCancelAutoLock(autoLockMinutes);
   if (options.persistSession) await writeSessionCache(_session);
   else await clearSessionCache();
+
+  // D4: Transparent v1 → v2 migration — re-encrypt with Argon2id on first successful v1 unlock
+  if (vault.version !== 2) {
+    createVault(
+      payload.mnemonic,
+      password,
+      payload.address,
+      payload.network,
+      {
+        mnemonicPassphrase: payload.mnemonicPassphrase,
+        derivation: payload.derivation,
+      },
+    ).catch(() => {/* non-fatal — will retry on next unlock */});
+  }
 
   return _session;
 }

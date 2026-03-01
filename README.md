@@ -43,6 +43,7 @@ It is built for operators who want:
 - [Mainnet / Testnet Runtime Switching](#mainnet--testnet-runtime-switching)
 - [Kaspa Network Coverage](#kaspa-network-coverage)
 - [Swap + KRC Token Metadata](#swap--krc-token-metadata)
+- [Local Node Mode (kaspad)](#local-node-mode-kaspad)
 - [Wallet Support (Current)](#wallet-support-current)
 - [Transaction Lifecycle + Receipts](#transaction-lifecycle--receipts)
 - [Scaling Modules (Backend Starters)](#scaling-modules-backend-starters)
@@ -106,7 +107,7 @@ WalletGate (Kasware / Kaspium / Demo)
      -> PnL Attribution (estimated + receipt-aware hybrid telemetry)
 
 Browser Extension (MV3)
-  -> Vault (AES-256-GCM + PBKDF2, auto-lock, optional session persistence)
+  -> Vault (AES-256-GCM + Argon2id, legacy PBKDF2 read/migrate, auto-lock, optional session persistence)
   -> Popup (Wallet / Swap / Agents / Security)
      -> UTXO Sync (standard vs covenant classification)
      -> Dry-Run Validator (5 hard checks, fail-closed)
@@ -143,7 +144,7 @@ Scale Path (Server)
 - Wallet panel (balance, UTXO view, withdraw tools)
 
 ### Extension Runtime (MV3 Wallet App)
-- Managed vault with AES-256-GCM encryption + PBKDF2 KDF, auto-lock alarm, and optional popup-reopen session persistence
+- Managed vault with AES-256-GCM encryption + Argon2id KDF (legacy PBKDF2 vaults auto-migrate), auto-lock alarm, and optional popup-reopen session persistence
 - Popup app tabs: `wallet`, `swap`, `agents`, `security`
 - Live feed health states (`LIVE FEED`, `PARTIAL FEED`, `FEED OFFLINE`) with active RPC endpoint visibility
 - Portfolio privacy toggle (`HIDE` / `SHOW`) persisted in extension storage
@@ -225,6 +226,40 @@ npm run dev:ext
 
 Load unpacked from `dist-extension/extension` in your browser's extension developer mode.
 
+## Local Node Mode (kaspad)
+
+The extension can use a locally managed `kaspad` process as its primary RPC backend.
+
+- Toggle from extension `Security` tab: `KASPA RPC ENDPOINT -> LOCAL NODE MODE`
+- Backend selection order:
+1. local node RPC (when enabled + healthy + synced + matching network profile)
+2. configured remote RPC pool fallback (`official` / `igra` / `kasplex` / `custom`)
+- Supported local profiles: `mainnet`, `testnet-10`, `testnet-11`, `testnet-12`
+- Signing boundary is unchanged (non-custodial signer remains inside existing extension vault flow)
+- Data storage defaults to managed OS-native app-data paths; custom dir override is optional
+
+Start local node control service:
+
+```bash
+cp .env.local-node.example .env.local-node
+set -a; source .env.local-node; set +a
+npm run local-node:start
+```
+
+Optional control endpoints:
+- `GET /metrics` (JSON) or `GET /metrics?format=prometheus`
+- `GET /events` (SSE lifecycle/status stream)
+
+Real runtime check (start/status/stop + RPC health):
+
+```bash
+npm run local-node:doctor
+```
+
+Full operator and troubleshooting guide:
+
+- `LOCAL_NODE.md`
+
 ## Operator Recipes (Copy/Paste)
 
 <details>
@@ -294,6 +329,12 @@ Create `.env` from `.env.example`.
 - `VITE_KASPA_IGRA_MAINNET_API_ENDPOINTS`, `VITE_KASPA_IGRA_TN10_API_ENDPOINTS`, `VITE_KASPA_IGRA_TN11_API_ENDPOINTS`, `VITE_KASPA_IGRA_TN12_API_ENDPOINTS`
 - `VITE_KASPA_KASPLEX_MAINNET_API_ENDPOINTS`, `VITE_KASPA_KASPLEX_TN10_API_ENDPOINTS`, `VITE_KASPA_KASPLEX_TN11_API_ENDPOINTS`, `VITE_KASPA_KASPLEX_TN12_API_ENDPOINTS`
 - `VITE_KASPA_KASPLEX_API_ENDPOINTS` (generic metadata pool fallback)
+
+Provider preset behavior:
+- `official`, `igra`, and `kasplex` now ship with built-in working L1 endpoint maps per network profile.
+- Environment values override those defaults per profile (`MAINNET`, `TN10`, `TN11`, `TN12`).
+- Extension `Security` tab can still override pool order/entries at runtime.
+- Saving custom/override endpoints requests host permission for that endpoint origin (required by MV3 before fetch is allowed).
 
 ### Wallet / Execution / Treasury
 - `VITE_ACCUMULATE_ONLY`

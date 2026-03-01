@@ -10,7 +10,6 @@ import { getNetwork } from "../shared/storage";
 import { resolveSwapRouteSource } from "./routeSource";
 import { validateSwapTransactionTarget } from "./signingDomain";
 import { withKaspaAddressNetwork } from "../../src/helpers";
-import { fetchTransaction } from "../network/kaspaClient";
 import {
   connectMetaMaskSidecar,
   extractReceiptBlockNumber,
@@ -42,11 +41,8 @@ import {
   listSwapSettlements,
   upsertSwapSettlement,
 } from "./settlementStore";
-import { addPendingTx, updatePendingTx } from "../tx/store";
-import { buildTransaction } from "../tx/builder";
-import { dryRunValidate } from "../tx/dryRun";
-import { signTransaction } from "../tx/signer";
-import { broadcastTransaction } from "../tx/broadcast";
+import { executeKaspaIntent } from "../tx/kernel";
+import { probeKaspaReceipt } from "../tx/receiptReconciler";
 
 export interface SwapGatingStatus {
   enabled: boolean;
@@ -59,7 +55,7 @@ export interface SwapQuoteRequestOptions {
 }
 
 function randomId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return `${prefix}_${crypto.randomUUID()}`;
 }
 
 function getActiveEvmSession(): EvmSidecarSession | null {
@@ -91,14 +87,6 @@ function failSettlement(
   state: "FAILED_BRIDGE" | "FAILED_TIMEOUT" | "FAILED_REVERT" = "FAILED_BRIDGE",
 ): SwapSettlementRecord {
   return advanceSwapSettlement(settlement, state, { error: message });
-}
-
-async function isKaspaTxConfirmed(txId: string): Promise<boolean> {
-  for (const network of KASPA_NETWORKS) {
-    const tx = await fetchTransaction(txId, network).catch(() => null);
-    if (tx?.acceptingBlockHash) return true;
-  }
-  return false;
 }
 
 function isEvmRouteConfigured(): { ok: boolean; reason: string | null } {
@@ -386,7 +374,8 @@ async function refreshKaspaNativeSettlement(record: SwapSettlementRecord): Promi
     return failed;
   }
 
-  const chainConfirmed = await isKaspaTxConfirmed(record.txHash);
+  const chainProbe = await probeKaspaReceipt(record.txHash, record.network ?? "mainnet").catch(() => null);
+  const chainConfirmed = Boolean(chainProbe?.confirmed);
   if (chainConfirmed && status.state === "confirmed") {
     const confirmed = advanceSwapSettlement(
       record,
@@ -445,7 +434,8 @@ async function executeEvmSwapQuote(quote: SwapQuote): Promise<SwapSettlementReco
     throw new Error("ZEROX_SETTLER_MISMATCH: refusing to execute unexpected transaction target.");
   }
   const id = randomId("swap");
-  let settlement = createSwapSettlementRecord(id, "evm_0x");
+  const evmNetwork = await currentSwapNetwork();
+  let settlement = createSwapSettlementRecord(id, "evm_0x", evmNetwork);
   settlement = advanceSwapSettlement(settlement, "QUOTED");
   await upsertSwapSettlement(settlement);
   settlement = advanceSwapSettlement(settlement, "SIGNED");
@@ -524,7 +514,7 @@ async function executeKaspaNativeSwapQuote(quote: SwapQuote): Promise<SwapSettle
   const amountKas = kasFromSompi(quote.amountIn);
 
   const id = randomId("swap");
-  let settlement = createSwapSettlementRecord(id, "kaspa_native");
+  let settlement = createSwapSettlementRecord(id, "kaspa_native", network);
   settlement = advanceSwapSettlement(settlement, "QUOTED");
   await upsertSwapSettlement(settlement);
   settlement = advanceSwapSettlement(settlement, "SIGNED");
@@ -532,32 +522,30 @@ async function executeKaspaNativeSwapQuote(quote: SwapQuote): Promise<SwapSettle
 
   let depositTxId = "";
   try {
-    let tx = await buildTransaction(
-      fromAddress,
-      quoteMeta.settlementAddress,
-      amountKas,
-      network,
+    const tx = await executeKaspaIntent(
+      {
+        fromAddress,
+        network,
+        recipients: [
+          { address: quoteMeta.settlementAddress, amountKas },
+        ],
+      },
+      {
+        awaitConfirmation: false,
+        telemetry: {
+          channel: "swap",
+          runId: id,
+          context: {
+            settlementId: id,
+            quoteId: quoteMeta.quoteId,
+            tokenIn: quote.tokenIn,
+            tokenOut: quote.customTokenOut?.symbol || quote.tokenOut,
+            amountIn: quote.amountIn.toString(),
+          },
+        },
+      },
     );
-    await addPendingTx(tx);
-
-    const dryRun = await dryRunValidate(tx);
-    if (!dryRun.valid) {
-      const err = dryRun.errors.join("; ");
-      await updatePendingTx({ ...tx, state: "DRY_RUN_FAIL", error: err });
-      const failed = failSettlement(settlement, `KASPA_NATIVE_DRY_RUN_FAILED: ${err}`);
-      await upsertSwapSettlement(failed);
-      return failed;
-    }
-
-    tx = { ...tx, state: "DRY_RUN_OK", fee: dryRun.estimatedFee };
-    await updatePendingTx(tx);
-
-    const signed = await signTransaction(tx);
-    await updatePendingTx(signed);
-
-    const confirming = await broadcastTransaction(signed);
-    await updatePendingTx(confirming);
-    depositTxId = confirming.txId || signed.txId || "";
+    depositTxId = tx.txId || "";
   } catch (err) {
     const failed = failSettlement(
       settlement,

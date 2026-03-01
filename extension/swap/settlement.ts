@@ -15,6 +15,7 @@ export interface SwapSettlementRecord {
   id: string;
   routeSource: SwapRouteSource;
   state: SwapSettlementState;
+  network: string;
   createdAt: number;
   updatedAt: number;
   txHash: string | null;
@@ -38,12 +39,14 @@ const ALLOWED_NEXT: Record<SwapSettlementState, SwapSettlementState[]> = {
 export function createSwapSettlementRecord(
   id: string,
   routeSource: SwapRouteSource,
+  network: string = "mainnet",
   now: number = Date.now(),
 ): SwapSettlementRecord {
   return {
     id,
     routeSource,
     state: "REQUESTED",
+    network,
     createdAt: now,
     updatedAt: now,
     txHash: null,

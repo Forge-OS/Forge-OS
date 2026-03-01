@@ -9,11 +9,13 @@ import { fmt, isKaspaAddress } from "../../src/helpers";
 import { fetchKasUsdPrice } from "../shared/api";
 import { fetchDagInfo, NETWORK_BPS } from "../network/kaspaClient";
 import { getSession } from "../vault/vault";
-import { buildTransaction } from "../tx/builder";
-import { dryRunValidate } from "../tx/dryRun";
-import { signTransaction } from "../tx/signer";
-import { broadcastAndPoll } from "../tx/broadcast";
-import { addPendingTx, updatePendingTx } from "../tx/store";
+import {
+  buildAndValidateKaspaIntent,
+  DeterministicExecutionError,
+  signBroadcastAndReconcileKaspaTx,
+} from "../tx/kernel";
+import { createExecutionRunId } from "../tx/executionTelemetry";
+import { updatePendingTx } from "../tx/store";
 import { getOrSyncUtxos, sompiToKas, syncUtxos } from "../utxo/utxoSync";
 import { getAllTokens } from "../tokens/registry";
 import {
@@ -155,6 +157,7 @@ export function WalletTab({
   const [selectedKrcToken, setSelectedKrcToken] = useState<KrcPortfolioToken | null>(null);
   const [krc721ChartMode, setKrc721ChartMode] = useState<"floor" | "volume">("floor");
   const [krc721ChartWindow, setKrc721ChartWindow] = useState<number>(KRC721_CHART_DEFAULT_WINDOW);
+  const [sendExecutionRunId, setSendExecutionRunId] = useState<string | null>(null);
 
   // Open send/receive panel when triggered from parent (hero buttons)
   useEffect(() => {
@@ -394,14 +397,37 @@ export function WalletTab({
     setSendStep("building");
     setDryRunErrors([]);
     setErrorMsg(null);
+    const runId = createExecutionRunId("manual_send");
+    setSendExecutionRunId(runId);
 
-    let built: PendingTx;
     try {
-      built = await buildTransaction(address, sendTo.trim(), amountNum, network);
-      await addPendingTx(built);
-      setPendingTx(built);
+      const validated = await buildAndValidateKaspaIntent({
+        fromAddress: address,
+        network,
+        recipients: [{ address: sendTo.trim(), amountKas: amountNum }],
+      }, {
+        onUpdate: ({ stage }) => {
+          if (stage === "validate") {
+            setSendStep("dry_run");
+          }
+        },
+        telemetry: {
+          channel: "manual",
+          runId,
+          context: {
+            surface: "wallet_tab_send",
+            to: sendTo.trim(),
+            amountKas: amountNum,
+          },
+        },
+      });
+      setPendingTx(validated);
+      setSendStep("confirm");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof DeterministicExecutionError && err.stage === "validate") {
+        if (err.details.length > 0) setDryRunErrors(err.details);
+      }
       setErrorMsg(
         msg === "INSUFFICIENT_FUNDS"
           ? "Insufficient balance including fees."
@@ -410,64 +436,46 @@ export function WalletTab({
             : `Build failed: ${msg}`,
       );
       setSendStep("error");
-      return;
     }
-
-    setSendStep("dry_run");
-    try {
-      const result = await dryRunValidate(built);
-      if (!result.valid) {
-        setDryRunErrors(result.errors);
-        setSendStep("error");
-        await updatePendingTx({ ...built, state: "DRY_RUN_FAIL", error: result.errors.join("; ") });
-        return;
-      }
-      const validated: PendingTx = { ...built, state: "DRY_RUN_OK", fee: result.estimatedFee };
-      setPendingTx(validated);
-      await updatePendingTx(validated);
-    } catch (err) {
-      setErrorMsg(`Validation failed: ${err instanceof Error ? err.message : String(err)}`);
-      setSendStep("error");
-      return;
-    }
-
-    setSendStep("confirm");
   };
 
   const handleSign = async () => {
     if (!pendingTx || !isManaged) return;
     setSendStep("signing");
 
-    let signed: PendingTx;
     try {
-      signed = await signTransaction(pendingTx);
-      setPendingTx(signed);
-      await updatePendingTx(signed);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMsg(msg === "WALLET_LOCKED" ? "Wallet locked — please unlock first." : `Signing failed: ${msg}`);
-      setSendStep("error");
-      return;
-    }
-
-    setSendStep("broadcast");
-    try {
-      await broadcastAndPoll(signed, async (updated) => {
-        setPendingTx(updated);
-        await updatePendingTx(updated);
-        if (updated.state === "CONFIRMED") {
-          setResultTxId(updated.txId ?? null);
-          setSendStep("done");
-          setUtxoReloadNonce((v) => v + 1);
-          onBalanceInvalidated?.();
-        }
-        if (updated.state === "FAILED") {
-          setErrorMsg(updated.error ?? "Transaction failed.");
-          setSendStep("error");
-        }
+      await signBroadcastAndReconcileKaspaTx(pendingTx, {
+        awaitConfirmation: true,
+        telemetry: {
+          channel: "manual",
+          runId: sendExecutionRunId || createExecutionRunId("manual_send"),
+          context: {
+            surface: "wallet_tab_send",
+            to: sendTo.trim(),
+            amountKas: amountNum,
+          },
+        },
+        onUpdate: async ({ stage, tx: updated }) => {
+          setPendingTx(updated);
+          await updatePendingTx(updated);
+          if (stage === "broadcast" || stage === "reconcile") {
+            setSendStep("broadcast");
+          }
+          if (updated.state === "CONFIRMED") {
+            setResultTxId(updated.txId ?? null);
+            setSendStep("done");
+            setUtxoReloadNonce((v) => v + 1);
+            onBalanceInvalidated?.();
+          }
+          if (updated.state === "FAILED") {
+            setErrorMsg(updated.error ?? "Transaction failed.");
+            setSendStep("error");
+          }
+        },
       });
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Transaction timed out awaiting confirmation.");
+      const msg = err instanceof Error ? err.message : "Transaction timed out awaiting confirmation.";
+      setErrorMsg(msg);
       setSendStep("error");
     }
   };
@@ -483,6 +491,7 @@ export function WalletTab({
     setDryRunErrors([]);
     setErrorMsg(null);
     setResultTxId(null);
+    setSendExecutionRunId(null);
   };
 
   const copyAddress = async () => {

@@ -2,7 +2,7 @@
 // Fail-closed: any single check failure blocks the entire pipeline.
 
 import type { PendingTx, DryRunResult } from "./types";
-import { getOrSyncUtxos } from "../utxo/utxoSync";
+import { syncUtxos } from "../utxo/utxoSync";
 import { estimateFee } from "../network/kaspaClient";
 import { isKaspaAddress } from "../../src/helpers";
 
@@ -38,8 +38,8 @@ export async function dryRunValidate(tx: PendingTx): Promise<DryRunResult> {
       );
     }
 
-    // Force a fresh fetch to catch concurrent spends
-    utxoSet = await getOrSyncUtxos(tx.fromAddress, tx.network);
+    // Force a fresh network fetch to catch concurrent spends (bypass cache)
+    utxoSet = await syncUtxos(tx.fromAddress, tx.network);
     const utxoIndex = new Set(
       utxoSet.utxos.map((u) => `${u.txId}:${u.outputIndex}`),
     );

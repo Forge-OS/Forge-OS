@@ -1,23 +1,40 @@
 // Vault type definitions — no plaintext secrets ever leave this boundary.
 import type { KaspaDerivationMeta } from "../../src/wallet/derivation";
+import type { ArgonParams } from "./kdf";
 
 /**
- * Persisted to chrome.storage.local.
- * Contains ONLY encrypted ciphertext + KDF parameters.
- * Mnemonic/private key is NEVER stored here in plaintext.
+ * V1 vault — PBKDF2-SHA-256, 600k iterations.
+ * Retained for reading legacy vaults; silently migrated to V2 on next unlock.
  */
-export interface EncryptedVault {
+export interface EncryptedVaultV1 {
   version: 1;
   kdf: "pbkdf2";
   salt: string;        // hex-encoded, 32 bytes
   iterations: number;  // PBKDF2 iteration count (600_000)
   hash: "SHA-256";
   iv: string;          // hex-encoded, 12 bytes (AES-GCM nonce)
-  // AES-256-GCM output — plaintext + 16-byte auth tag appended by SubtleCrypto
-  ciphertext: string;  // hex-encoded
+  ciphertext: string;  // hex-encoded — AES-256-GCM ciphertext + 16-byte auth tag
   createdAt: number;   // Unix ms
   updatedAt: number;   // Unix ms
 }
+
+/**
+ * V2 vault — Argon2id KDF (64 MB, 3 passes, 4 lanes).
+ * Default for all newly created vaults.
+ */
+export interface EncryptedVaultV2 {
+  version: 2;
+  kdf: "argon2id";
+  argon: ArgonParams;
+  salt: string;        // hex-encoded, 32 bytes
+  iv: string;          // hex-encoded, 12 bytes (AES-GCM nonce)
+  ciphertext: string;  // hex-encoded — AES-256-GCM ciphertext + 16-byte auth tag
+  createdAt: number;   // Unix ms
+  updatedAt: number;   // Unix ms
+}
+
+/** Union of all supported vault versions. */
+export type EncryptedVault = EncryptedVaultV1 | EncryptedVaultV2;
 
 /**
  * The plaintext payload encrypted inside the vault.

@@ -9,8 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ── PBKDF2 speed mock ─────────────────────────────────────────────────────────
 // Replaces the 600,000-iteration KDF with a 1-iteration version so tests run
 // in milliseconds instead of seconds. The crypto operations are otherwise identical.
-vi.mock("../../extension/vault/kdf", () => ({
-  deriveKey: async (password: string, salt: Uint8Array) => {
+vi.mock("../../extension/vault/kdf", () => {
+  async function fastDeriveKey(password: string, salt: Uint8Array) {
     const enc = new TextEncoder();
     const passKey = await crypto.subtle.importKey(
       "raw",
@@ -26,9 +26,15 @@ vi.mock("../../extension/vault/kdf", () => ({
       false,
       ["encrypt", "decrypt"],
     );
-  },
-  randomBytes: (length: number) => crypto.getRandomValues(new Uint8Array(length)),
-}));
+  }
+  return {
+    deriveKey: fastDeriveKey,
+    // Use same fast path for argon2id in tests (correctness tested separately)
+    deriveKeyArgon2id: fastDeriveKey,
+    DEFAULT_ARGON_PARAMS: { memoryMB: 64, iterations: 3, parallelism: 4, hashLength: 32 },
+    randomBytes: (length: number) => crypto.getRandomValues(new Uint8Array(length)),
+  };
+});
 
 // ── chrome mock ───────────────────────────────────────────────────────────────
 const _store: Record<string, string> = {};
