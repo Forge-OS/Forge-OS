@@ -111,6 +111,72 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           <Badge text="NON-CUSTODIAL" color={C.warn} dot />
           <Badge text="DAG-SPEED EXECUTION" color={C.accent} dot />
         </div>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10, marginTop: 4 }}>
+          <button
+            data-testid="wallet-gate-connect-wallet"
+            onClick={onSignInClick}
+            style={{
+              background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              color: "#04110E",
+              fontSize: 13,
+              ...mono,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              padding: "12px 22px",
+              minWidth: 220,
+              boxShadow: "0 4px 20px rgba(57,221,182,0.28)",
+              transition: "box-shadow 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 28px rgba(57,221,182,0.44)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 20px rgba(57,221,182,0.28)";
+            }}
+          >
+            CONNECT WALLET →
+          </button>
+          <button
+            data-testid="wallet-gate-open-wallet-creator"
+            onClick={() => setShowCreator(true)}
+            style={{
+              background: "linear-gradient(135deg, rgba(57,221,182,0.06) 0%, rgba(8,13,20,0.55) 100%)",
+              border: `1px solid ${C.accent}35`,
+              borderRadius: 10,
+              cursor: "pointer",
+              color: C.text,
+              fontSize: 11,
+              ...mono,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              padding: "12px 18px",
+              minWidth: 220,
+            }}
+          >
+            NEW? CREATE A WALLET
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginTop: 2 }}>
+          {[
+            { href: "https://x.com/ForgeOSxyz", icon: "𝕏", label: "@ForgeOSxyz", c: C.text },
+            { href: "https://github.com/Forge-OS", icon: "⌘", label: "GitHub", c: C.dim },
+            { href: "https://t.me/ForgeOSDefi", icon: "✈", label: "Telegram", c: C.dim },
+          ].map(item => (
+            <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer"
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "6px 10px", borderRadius: 6,
+                background: "rgba(16,25,35,0.5)", border: `1px solid rgba(33,48,67,0.7)`,
+                color: item.c, textDecoration: "none", fontSize: 10, fontWeight: 600, ...mono,
+              }}>
+              <span style={{ fontSize: 12 }}>{item.icon}</span>
+              <span>{item.label}</span>
+            </a>
+          ))}
+        </div>
       </div>
 
       {/* ── MAIN CONTENT GRID ── */}
@@ -173,25 +239,6 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
             ))}
           </div>
 
-          {/* Social links */}
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-            {[
-              { href: "https://x.com/ForgeOSxyz", icon: "𝕏", label: "@ForgeOSxyz", c: C.text },
-              { href: "https://github.com/Forge-OS", icon: "⌘", label: "GitHub", c: C.dim },
-              { href: "https://t.me/ForgeOSDefi", icon: "✈", label: "Telegram", c: C.dim },
-            ].map(item => (
-              <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer"
-                style={{
-                  display: "flex", alignItems: "center", gap: 5,
-                  padding: "6px 10px", borderRadius: 6,
-                  background: "rgba(16,25,35,0.5)", border: `1px solid rgba(33,48,67,0.7)`,
-                  color: item.c, textDecoration: "none", fontSize: 10, fontWeight: 600, ...mono,
-                }}>
-                <span style={{ fontSize: 12 }}>{item.icon}</span>
-                <span>{item.label}</span>
-              </a>
-            ))}
-          </div>
         </section>
 
         {/* ── CONNECT COLUMN ── */}
@@ -199,9 +246,7 @@ export function WalletGate({ onConnect, onSignInClick }: { onConnect: (session: 
           <div aria-hidden style={{ height: "clamp(34px, 5vw, 52px)" }} />
           <WebWalletSetup
             networkLabel={NETWORK_LABEL}
-            onSignInClick={onSignInClick}
             onEnterDemoMode={enterDemoMode}
-            onOpenCreator={() => setShowCreator(true)}
           />
         </div>
       </div>

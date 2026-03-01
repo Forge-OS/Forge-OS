@@ -742,7 +742,19 @@ export function Popup() {
       <div style={{ position: "absolute", bottom: 40, right: -60, width: 200, height: 200, borderRadius: "50%", background: `radial-gradient(ellipse, ${C.accent}07 0%, transparent 70%)`, pointerEvents: "none", zIndex: 0 }} />
 
       {/* Header */}
-      <div style={{ padding: "13px 16px 11px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "relative", zIndex: 1 }}>
+      <div
+        style={{
+          padding: "12px 16px 11px",
+          borderBottom: `1px solid rgba(44,61,82,0.85)`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          position: "relative",
+          zIndex: 1,
+          background: "linear-gradient(180deg, rgba(8,14,20,0.72), rgba(8,14,20,0.42))",
+          backdropFilter: "blur(3px)",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <img src="../icons/icon48.png" alt="Forge-OS" style={{ width: 24, height: 24, objectFit: "contain", filter: "drop-shadow(0 0 8px rgba(57,221,182,0.55))" }} />
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.1em" }}>
@@ -755,10 +767,17 @@ export function Popup() {
             onClick={handleCycleNetwork}
             title="Click to switch network"
             style={{
-              fontSize: 9, color: netColor, fontWeight: 700, letterSpacing: "0.1em",
-              background: `${netColor}15`,
-              border: `1px solid ${netColor}35`,
-              borderRadius: 4, padding: "3px 8px", cursor: "pointer", ...mono,
+              fontSize: 9,
+              color: netColor,
+              fontWeight: 700,
+              letterSpacing: "0.1em",
+              background: `${netColor}18`,
+              border: `1px solid ${netColor}3A`,
+              borderRadius: 999,
+              padding: "4px 10px",
+              cursor: "pointer",
+              ...mono,
+              transition: "all 180ms ease",
             }}
           >{NETWORK_LABELS[network] ?? network.toUpperCase()}</button>
 
@@ -767,9 +786,15 @@ export function Popup() {
               onClick={handleLock}
               title="Lock wallet"
               style={{
-                background: "rgba(33,48,67,0.5)", border: `1px solid ${C.border}`,
-                borderRadius: 4, padding: "3px 8px",
-                color: C.dim, fontSize: 10, cursor: "pointer", ...mono,
+                background: "rgba(33,48,67,0.48)",
+                border: `1px solid rgba(44,61,82,0.86)`,
+                borderRadius: 999,
+                padding: "4px 9px",
+                color: C.dim,
+                fontSize: 10,
+                cursor: "pointer",
+                ...mono,
+                transition: "all 180ms ease",
               }}
             >🔒</button>
           )}
@@ -778,7 +803,19 @@ export function Popup() {
 
       {/* Address + balance hero */}
       {address ? (
-        <div style={{ padding: "20px 16px 16px", borderBottom: `1px solid ${C.border}`, textAlign: "center", position: "relative", zIndex: 1 }}>
+        <div
+          style={{
+            margin: "12px 12px 10px",
+            padding: "18px 14px 14px",
+            border: `1px solid rgba(44,61,82,0.88)`,
+            borderRadius: 16,
+            textAlign: "center",
+            position: "relative",
+            zIndex: 1,
+            background: "linear-gradient(160deg, rgba(14,22,31,0.86) 0%, rgba(9,14,21,0.86) 100%)",
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 14px 26px rgba(0,0,0,0.24)",
+          }}
+        >
           {/* Address row */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 16 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.ok, flexShrink: 0, boxShadow: `0 0 6px ${C.ok}` }} />
@@ -840,7 +877,16 @@ export function Popup() {
                 </svg>
               </button>
             </div>
-            <div style={{ fontSize: 38, fontWeight: 700, color: C.text, letterSpacing: "0.005em", lineHeight: 1 }}>
+            <div
+              style={{
+                fontSize: 40,
+                fontWeight: 700,
+                color: C.text,
+                letterSpacing: "0.01em",
+                lineHeight: 1,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
               {maskedPortfolioDisplayValue}
             </div>
           </div>
@@ -873,17 +919,29 @@ export function Popup() {
                   flex: 1,
                   background: `linear-gradient(145deg, ${C.accent}1A, rgba(8,13,20,0.7))`,
                   border: `1px solid ${C.accent}40`,
-                  borderRadius: 10, padding: "9px 0",
+                  borderRadius: 12, padding: "9px 0",
                   color: C.accent, fontSize: 10, fontWeight: 700, cursor: "pointer", ...mono,
                   letterSpacing: "0.1em",
-                  transition: "background 0.15s, border-color 0.15s",
+                  transition: "all 180ms ease",
                 }}
               >{btn.label}</button>
             ))}
           </div>
         </div>
       ) : (
-        <div style={{ padding: "28px 16px", textAlign: "center", borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 1 }}>
+        <div
+          style={{
+            margin: "12px 12px 10px",
+            padding: "26px 14px",
+            textAlign: "center",
+            border: `1px solid rgba(44,61,82,0.88)`,
+            borderRadius: 16,
+            position: "relative",
+            zIndex: 1,
+            background: "linear-gradient(160deg, rgba(14,22,31,0.86) 0%, rgba(9,14,21,0.86) 100%)",
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 14px 26px rgba(0,0,0,0.24)",
+          }}
+        >
           <div style={{ fontSize: 11, color: C.dim, marginBottom: 12 }}>No wallet connected</div>
           <button
             onClick={() => chrome.tabs.create({ url: "https://forge-os.xyz" })}
@@ -965,19 +1023,29 @@ export function Popup() {
       )}
 
       {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 1 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 6,
+          padding: "0 12px 10px",
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
         {(["wallet", "swap", "agents", "security"] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             style={{
-              flex: 1, background: tab === t ? `${C.accent}08` : "none", border: "none",
-              borderBottom: `2px solid ${tab === t ? C.accent : "transparent"}`,
+              flex: 1,
+              background: tab === t ? `${C.accent}14` : "rgba(14,21,30,0.6)",
+              border: `1px solid ${tab === t ? `${C.accent}4A` : "rgba(44,61,82,0.8)"}`,
+              borderRadius: 10,
               color: tab === t ? C.accent : C.dim,
               fontSize: 10, fontWeight: 700, cursor: "pointer",
               padding: "9px 0", letterSpacing: "0.1em", ...mono,
-              textTransform: "uppercase", transition: "color 0.15s, border-color 0.15s, background 0.15s",
-              boxShadow: tab === t ? `0 2px 12px ${C.accent}25` : "none",
+              textTransform: "uppercase", transition: "all 180ms ease",
+              boxShadow: tab === t ? `0 6px 14px ${C.accent}25` : "none",
             }}
           >{t}</button>
         ))}
@@ -1015,7 +1083,18 @@ export function Popup() {
       </div>
 
       {/* Footer — live DAG info */}
-      <div style={{ padding: "7px 16px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "relative", zIndex: 1 }}>
+      <div
+        style={{
+          padding: "8px 14px",
+          borderTop: `1px solid rgba(44,61,82,0.82)`,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          position: "relative",
+          zIndex: 1,
+          background: "linear-gradient(180deg, rgba(8,14,20,0.32), rgba(8,14,20,0.56))",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 8, color: C.muted, letterSpacing: "0.06em" }}>FORGE-OS</span>
           <span style={{ fontSize: 8, color: feedColor, letterSpacing: "0.05em", fontWeight: 700 }}>

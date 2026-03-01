@@ -416,11 +416,11 @@ export function SwapTab() {
 
   // ── Shared styles ─────────────────────────────────────────────────────────
   const swapCard: React.CSSProperties = {
-    background: "linear-gradient(155deg, rgba(14,20,29,0.97) 0%, rgba(10,15,22,0.94) 100%)",
-    border: `1px solid rgba(28,42,58,0.9)`,
-    borderRadius: 18,
+    background: "linear-gradient(158deg, rgba(14,21,30,0.96) 0%, rgba(10,15,22,0.92) 100%)",
+    border: `1px solid rgba(44,61,82,0.88)`,
+    borderRadius: 16,
     padding: "16px 16px 14px",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 10px 28px rgba(0,0,0,0.32)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 24px rgba(0,0,0,0.3)",
   };
 
   const tokenBtn = (hasToken: boolean): React.CSSProperties => ({
@@ -436,28 +436,29 @@ export function SwapTab() {
     ...mono,
   });
   const balancePanel: React.CSSProperties = {
-    marginTop: 11,
+    marginTop: 12,
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
-    background: "rgba(12,18,26,0.78)",
-    border: "1px solid rgba(28,42,58,0.85)",
-    borderRadius: 11,
-    padding: "7px 10px",
+    gap: 5,
+    background: "rgba(10,16,23,0.8)",
+    border: "1px solid rgba(44,61,82,0.82)",
+    borderRadius: 12,
+    padding: "8px 12px",
+    minHeight: 46,
   };
   const balanceKicker: React.CSSProperties = {
     fontSize: 8,
     color: C.muted,
-    letterSpacing: "0.1em",
+    letterSpacing: "0.11em",
     ...mono,
   };
   const balanceValue: React.CSSProperties = {
-    fontSize: 12,
+    fontSize: 13,
     color: C.text,
     fontWeight: 700,
-    letterSpacing: "0.03em",
+    letterSpacing: "0.02em",
     lineHeight: 1.1,
     textAlign: "center",
     fontVariantNumeric: "tabular-nums",

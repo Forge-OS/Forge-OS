@@ -3,16 +3,12 @@ import { C, mono } from "../tokens";
 
 type WebWalletSetupProps = {
   networkLabel: string;
-  onSignInClick?: () => void;
   onEnterDemoMode: () => void;
-  onOpenCreator: () => void;
 };
 
 export function WebWalletSetup({
   networkLabel,
-  onSignInClick,
   onEnterDemoMode,
-  onOpenCreator,
 }: WebWalletSetupProps) {
   return (
     <div data-testid="web-wallet-setup" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -24,35 +20,6 @@ export function WebWalletSetup({
         <div style={{ fontSize: 12, color: C.dim, marginBottom: 16 }}>
           All operations are wallet-native. Forge-OS never stores private keys or signs on your behalf.
         </div>
-
-        <button
-          data-testid="wallet-gate-connect-wallet"
-          onClick={onSignInClick}
-          style={{
-            width: "100%",
-            background: `linear-gradient(90deg, ${C.accent}, #7BE9CF)`,
-            border: "none",
-            borderRadius: 10,
-            cursor: "pointer",
-            color: "#04110E",
-            fontSize: 14,
-            ...mono,
-            fontWeight: 700,
-            letterSpacing: "0.08em",
-            padding: "16px 0",
-            boxShadow: "0 4px 20px rgba(57,221,182,0.28)",
-            marginBottom: 10,
-            transition: "box-shadow 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 28px rgba(57,221,182,0.44)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 20px rgba(57,221,182,0.28)";
-          }}
-        >
-          CONNECT WALLET →
-        </button>
 
         <div style={{ marginBottom: 10 }}>
           <button
@@ -75,38 +42,6 @@ export function WebWalletSetup({
             ENTER DEMO MODE
           </button>
         </div>
-
-        <button
-          data-testid="wallet-gate-open-wallet-creator"
-          onClick={onOpenCreator}
-          style={{
-            width: "100%",
-            background: "linear-gradient(135deg, rgba(57,221,182,0.06) 0%, rgba(8,13,20,0.55) 100%)",
-            border: `1px solid ${C.accent}28`,
-            borderRadius: 10,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "12px 16px",
-            marginBottom: 16,
-            transition: "border-color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.borderColor = `${C.accent}55`;
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.borderColor = `${C.accent}28`;
-          }}
-        >
-          <div style={{ textAlign: "left" }}>
-            <div style={{ fontSize: 11, color: C.text, ...mono, fontWeight: 700, marginBottom: 2 }}>New to Kaspa?</div>
-            <div style={{ fontSize: 10, color: C.dim }}>Create or import a wallet</div>
-          </div>
-          <span style={{ fontSize: 11, color: C.accent, ...mono, fontWeight: 700, letterSpacing: "0.06em", flexShrink: 0, marginLeft: 8 }}>
-            CREATE ›
-          </span>
-        </button>
 
         <Divider m={14} />
         <div style={{ fontSize: 10, color: C.dim, ...mono, lineHeight: 1.5 }}>

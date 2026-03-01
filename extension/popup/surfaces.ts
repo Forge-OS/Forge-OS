@@ -22,10 +22,10 @@ const TONE_GLOW: Record<Tone, string> = {
 };
 
 export const popupTabStack: CSSProperties = {
-  padding: "13px 15px 15px",
+  padding: "14px 16px 16px",
   display: "flex",
   flexDirection: "column",
-  gap: 11,
+  gap: 12,
   minWidth: 0,
 };
 
@@ -49,11 +49,11 @@ export function sectionCard(tone: Tone = "default", compact = false): CSSPropert
   const borderColor = TONE_COLOR[tone];
   const glow = TONE_GLOW[tone];
   return {
-    background: `linear-gradient(155deg, rgba(11,17,24,0.92) 0%, rgba(8,13,20,0.86) 100%)`,
-    border: `1px solid ${tone === "default" ? C.border : `${borderColor}32`}`,
-    borderRadius: 12,
-    padding: compact ? "10px 12px" : "12px 14px",
-    boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 22px rgba(0,0,0,0.22)`,
+    background: `linear-gradient(158deg, rgba(13,20,28,0.95) 0%, rgba(8,13,20,0.9) 100%)`,
+    border: `1px solid ${tone === "default" ? "rgba(44,61,82,0.88)" : `${borderColor}3A`}`,
+    borderRadius: 16,
+    padding: compact ? "10px 12px" : "13px 15px",
+    boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), 0 14px 30px rgba(0,0,0,0.26)`,
     position: "relative",
     overflow: "hidden",
     minWidth: 0,
@@ -67,10 +67,10 @@ export function sectionCard(tone: Tone = "default", compact = false): CSSPropert
 
 export function insetCard(): CSSProperties {
   return {
-    background: "linear-gradient(180deg, rgba(5,7,10,0.62), rgba(7,11,16,0.72))",
-    border: `1px solid ${C.border}`,
-    borderRadius: 10,
-    padding: "10px 12px",
+    background: "linear-gradient(180deg, rgba(8,12,18,0.78), rgba(6,10,15,0.82))",
+    border: `1px solid rgba(44,61,82,0.82)`,
+    borderRadius: 12,
+    padding: "11px 13px",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)",
     minWidth: 0,
     overflowWrap: "anywhere",
@@ -106,7 +106,7 @@ export function outlineButton(color = C.dim, strong = false): CSSProperties {
       ? `linear-gradient(180deg, rgba(14,22,32,0.9), rgba(9,14,20,0.9))`
       : "rgba(16,25,35,0.55)",
     border: `1px solid ${color === C.dim ? C.border : `${color}40`}`,
-    borderRadius: 8,
+    borderRadius: 10,
     color,
     cursor: "pointer",
     fontSize: 10,
@@ -114,6 +114,7 @@ export function outlineButton(color = C.dim, strong = false): CSSProperties {
     letterSpacing: "0.08em",
     ...mono,
     boxShadow: strong ? "0 6px 14px rgba(0,0,0,0.18)" : undefined,
+    transition: "all 180ms ease",
     whiteSpace: "normal",
     lineHeight: 1.2,
     textAlign: "center",
@@ -127,13 +128,14 @@ export function primaryButton(active = true): CSSProperties {
       : "rgba(33,48,67,0.55)",
     color: active ? "#04110E" : C.dim,
     border: "none",
-    borderRadius: 8,
+    borderRadius: 10,
     cursor: active ? "pointer" : "not-allowed",
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: "0.08em",
     ...mono,
     boxShadow: active ? "0 8px 18px rgba(57,221,182,0.16)" : undefined,
+    transition: "all 180ms ease",
     whiteSpace: "normal",
     lineHeight: 1.2,
     textAlign: "center",
@@ -146,10 +148,10 @@ export function monoInput(hasError = false): CSSProperties {
     boxSizing: "border-box" as const,
     background: "linear-gradient(180deg, rgba(8,13,20,0.82), rgba(9,14,21,0.9))",
     border: `1px solid ${hasError ? C.danger : C.border}`,
-    borderRadius: 8,
-    padding: "9px 11px",
+    borderRadius: 10,
+    padding: "10px 12px",
     color: C.text,
-    fontSize: 10,
+    fontSize: 11,
     ...mono,
     outline: "none",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)",

@@ -1587,9 +1587,23 @@ function formatKrc721WindowLabel(points: number): string {
 
 function MetricTile({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div style={{ ...insetCard(), padding: "7px 8px" }}>
-      <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.07em", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 10, color: tone, fontWeight: 700, ...mono }}>{value}</div>
+    <div style={{ ...insetCard(), padding: "8px 10px" }}>
+      <div style={{ fontSize: 8, color: C.dim, letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
+      <div
+        style={{
+          fontSize: 11,
+          color: tone,
+          fontWeight: 700,
+          ...mono,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1.2,
+          minHeight: 13,
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }
